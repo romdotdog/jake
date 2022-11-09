@@ -1,0 +1,19 @@
+{
+    "name": "jake",
+    "version": "0.0.0",
+    "description": "An experimental compiler.",
+    "main": "index.js",
+    "type": "module",
+    "author": "rom",
+    "license": "UNLICENSED",
+    "scripts": {
+        "watch": "swc -w --out-dir dist src/index.ts"
+    },
+    "devDependencies": {
+        "@swc/cli": "^0.1.57",
+        "@swc/core": "^1.3.14",
+        "@types/node": "^18.11.9",
+        "chokidar": "^3.5.3",
+        "typescript": "^4.8.4"
+    }
+}
