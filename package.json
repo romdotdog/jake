@@ -7,7 +7,7 @@
     "author": "rom",
     "license": "UNLICENSED",
     "scripts": {
-        "watch": "swc -w --out-dir dist src/index.ts"
+        "watch": "swc -w --out-dir dist src"
     },
     "devDependencies": {
         "@swc/cli": "^0.1.57",

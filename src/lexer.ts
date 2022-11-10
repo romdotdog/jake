@@ -1,9 +1,18 @@
 // heavily based on llex.c
 export default class Lexer {
 	private lines: number[] = [];
-	private p = 0;
+	private srcLength: number;
 
-	constructor(private src: string) {}
+	public buffer: string | number | null = null;
+	public start = 0;
+	public p = 0;
+	constructor(private src: string) {
+		this.srcLength = src.length;
+	}
+
+	public link(span: Span) {
+		return this.src.substring(span.start, span.end);
+	}
 
 	private skip() {
 		return ++this.p;
@@ -26,6 +35,64 @@ export default class Lexer {
 		this.lines.push(this.p);
 	}
 
+	private lookahead(f: () => boolean): boolean {
+		let position = this.p;
+		const success = f();
+		if (!success) {
+			this.p = position;
+		}
+		return success;
+	}
+
+	private orEOF(b: boolean) {
+		return this.p >= this.srcLength || b;
+	}
+
+	private andNotEOF(b: boolean) {
+		return this.p < this.srcLength && b;
+	}
+
+	private readNumeral() {
+		// assert isDigit
+		let char;
+		do {
+			char = this.get();
+		} while (this.andNotEOF(isDigitOrUnderscore(char)));
+		if (char == ".") {
+			const valid = this.lookahead(() => {
+				char = this.get();
+				if (isDigit(char)) {
+					do {
+						char = this.get();
+					} while (this.andNotEOF(isDigitOrUnderscore(char)));
+					return true;
+				}
+				return false;
+			});
+			if (!valid) {
+				return;
+			}
+		}
+		if (char == "e" || char == "E") {
+			this.lookahead(() => {
+				char = this.get();
+				if (isDigitPlusOrMinus(char)) {
+					do {
+						char = this.get();
+					} while (this.andNotEOF(isDigit(char)));
+					return true;
+				}
+				return false;
+			});
+		}
+	}
+
+	private bufferNumeral() {
+		const start = this.p;
+		this.readNumeral();
+		this.buffer = parseFloat(this.src.substring(start, this.p));
+	}
+
 	private maybeTakeEquals(normalToken: Token, equalsToken: Token) {
 		if (this.get() == "=") {
 			this.skip();
@@ -37,6 +104,7 @@ export default class Lexer {
 	public next(): Token {
 		while (true) {
 			const current = this.current();
+			this.start = this.p;
 			switch (current) {
 				case "\n":
 				case "\r": {
@@ -46,11 +114,11 @@ export default class Lexer {
 				case "/": {
 					const current = this.get();
 					if (current == "/") {
-						while (!isNewlineOrEOF(this.get()));
+						while (!this.orEOF(isNewline(this.get())));
 					} else if (current == "*") {
 						while (true) {
-							while (!isAsteriskOrEOF(this.get()));
-							if (isSlashOrEOF(this.get())) {
+							while (this.andNotEOF(this.get() != "*"));
+							if (this.orEOF(this.get() == "/")) {
 								break;
 							}
 						}
@@ -63,15 +131,12 @@ export default class Lexer {
 
 					continue;
 				}
-				case "*": {
+				case "*":
 					return this.maybeTakeEquals(Token.Asterisk, Token.AsteriskEquals);
-				}
-				case "%": {
+				case "%":
 					return this.maybeTakeEquals(Token.Percent, Token.PercentEquals);
-				}
-				case "+": {
+				case "+":
 					return this.maybeTakeEquals(Token.Plus, Token.PlusEquals);
-				}
 				case "-": {
 					const current = this.get();
 					if (current == ">") {
@@ -106,24 +171,18 @@ export default class Lexer {
 						return Token.RightAngle;
 					}
 				}
-				case "=": {
+				case "=":
 					return this.maybeTakeEquals(Token.Equals, Token.EqualsEquals);
-				}
-				case "!": {
+				case "!":
 					return this.maybeTakeEquals(Token.Exclamation, Token.ExclamationEquals);
-				}
-				case "&": {
+				case "&":
 					return this.maybeTakeEquals(Token.Ampersand, Token.AmpersandEquals);
-				}
-				case "|": {
+				case "|":
 					return this.maybeTakeEquals(Token.Pipe, Token.PipeEquals);
-				}
-				case "^": {
+				case "^":
 					return this.maybeTakeEquals(Token.Caret, Token.CaretEquals);
-				}
-				case "^": {
+				case "~":
 					return this.maybeTakeEquals(Token.Tilde, Token.TildeEquals);
-				}
 				case "(": {
 					this.skip();
 					return Token.LeftParen;
@@ -157,11 +216,29 @@ export default class Lexer {
 					return Token.Semicolon;
 				}
 				case ".": {
-					if (this.get() == ".") {
+					const current = this.get();
+					if (current == ".") {
 						this.skip();
 						return Token.PeriodPeriod;
+					} else if (isDigit(current)) {
+						this.bufferNumeral();
+						return Token.Number;
 					}
 					return Token.Period;
+				}
+				case "\"": {
+					let current = this.get();
+					const start = this.p;
+					while (current != "\"") {
+						if (isNewline(current)) {
+							this.buffer = this.src.substring(start, this.p);
+							return Token.UnclosedString;
+						}
+						current = this.get();
+					}
+					this.skip();
+					this.buffer = this.src.substring(start, this.p);
+					return Token.String;
 				}
 				case ",": {
 					this.skip();
@@ -171,29 +248,68 @@ export default class Lexer {
 					return Token.EOF;
 				}
 				default: {
+					if (isSpace(current)) {
+						// assert not \n, \r
+						this.skip();
+						continue;
+					} else if (isDigit(current)) {
+						this.bufferNumeral();
+						return Token.Number;
+					}
+					const start = this.p;
+					while (!this.orEOF(isSpace(this.get())));
+					const buffer = this.src.substring(start, this.p);
+					const lookup = keywords.get(buffer);
+					if (lookup !== undefined) {
+						return lookup;
+					}
+					this.buffer = buffer;
+					return Token.Ident;
 				}
 			}
 		}
 	}
 }
 
-function isSlashOrEOF(char: string) {
-	return char == "" || char == "/";
+const whitespace = new Set([" ", "\n", "\t", "\v", "\f", "\r"]);
+function isSpace(char: string) {
+	return whitespace.has(char);
 }
 
-function isAsteriskOrEOF(char: string) {
-	return char == "" || char == "*";
+function isDigit(char: string) {
+	return char >= "0" && char <= "9";
 }
 
-function isNewlineOrEOF(char: string) {
-	return char == "" || isNewline(char);
+function isDigitPlusOrMinus(char: string) {
+	return isDigit(char) || char == "+" || char == "-";
+}
+
+function isDigitOrUnderscore(char: string) {
+	return isDigit(char) || char == "_";
 }
 
 function isNewline(char: string) {
 	return char == "\n" || char == "\r";
 }
 
-enum Token {
+export enum Token {
+	Function,
+	As,
+	Inline,
+	Export,
+	Import,
+	Host,
+	Loop,
+	Type,
+	If,
+	Let,
+	Else,
+	Mut,
+	Union,
+	Return,
+	Continue,
+	With,
+	Without,
 	Asterisk,
 	AsteriskEquals,
 	Slash,
@@ -236,5 +352,34 @@ enum Token {
 	Period,
 	PeriodPeriod,
 	Comma,
+	String,
+	UnclosedString,
+	Number,
+	Ident,
 	EOF
 }
+
+export interface Span {
+	start: number,
+	end: number
+}
+
+const keywords = new Map([
+	["function", Token.Function],
+	["as", Token.As],
+	["inline", Token.Inline],
+	["export", Token.Export],
+	["import", Token.Import],
+	["host", Token.Host],
+	["loop", Token.Loop],
+	["type", Token.Type],
+	["if", Token.If],
+	["let", Token.Let],
+	["else", Token.Else],
+	["mut", Token.Mut],
+	["union", Token.Union],
+	["return", Token.Return],
+	["continue", Token.Continue],
+	["with", Token.With],
+	["without", Token.Without]
+])
