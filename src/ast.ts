@@ -11,8 +11,8 @@ export class Source {
 export class Import {
     constructor(
         public span: Span,
-        public path: string,
-        public namespace: string | null,
+        public path: StringLiteral,
+        public namespace: Span | null,
         public without: Span[],
         public with_: [Span, Span][]
     ) { }
@@ -21,7 +21,7 @@ export class Import {
 export class HostImport {
     constructor(
         public span: Span,
-        public path: string,
+        public path: StringLiteral,
         public name: Span,
         public ty: Atom,
     ) { }
@@ -115,8 +115,6 @@ export class Call extends Atom {
     }
 }
 
-
-
 export class Product extends Atom {
     constructor(
         span: Span,
@@ -126,7 +124,7 @@ export class Product extends Atom {
     }
 }
 
-export class NumberAtom extends Atom {
+export class NumberLiteral extends Atom {
     constructor(
         span: Span,
         public value: number,
@@ -135,10 +133,18 @@ export class NumberAtom extends Atom {
     }
 }
 
-export class Ident extends Atom {
+export class StringLiteral extends Atom {
     constructor(
         span: Span,
         public value: string,
+    ) {
+        super(span);
+    }
+}
+
+export class Ident extends Atom {
+    constructor(
+        span: Span
     ) {
         super(span);
     }
