@@ -227,18 +227,34 @@ export default class Lexer {
 					return Token.Period;
 				}
 				case "\"": {
+					let chunks = [];
 					let current = this.get();
-					const start = this.p;
+					let start = this.p;
+					let closed = true;
 					while (current != "\"") {
 						if (isNewline(current)) {
-							this.buffer = this.src.substring(start, this.p);
-							return Token.UnclosedString;
+							closed = false;
+							break;
+						}
+						if (current == "\\") {
+							current = this.get();
+							const lookup = escape.get(current);
+							if (lookup) {
+								chunks.push(this.src.substring(start, this.p - 1));
+								chunks.push(lookup);
+								current = this.get();
+								start = this.p;
+							}
+							continue;
 						}
 						current = this.get();
 					}
-					this.skip();
-					this.buffer = this.src.substring(start, this.p);
-					return Token.String;
+					chunks.push(this.src.substring(start, this.p));
+					this.buffer = chunks.join("");
+					if (closed) {
+						this.skip();
+					}
+					return closed ? Token.String : Token.UnclosedString;
 				}
 				case ",": {
 					this.skip();
@@ -271,6 +287,7 @@ export default class Lexer {
 	}
 }
 
+const escape = new Map([["b", "\b"], ["f", "\f"], ["n", "\n"], ["r", "\r"], ["t", "\t"], ["v", "\v"], ["\"", "\""], ["\\", "\\"]])
 const whitespace = new Set([" ", "\n", "\t", "\v", "\f", "\r"]);
 function isSpace(char: string) {
 	return whitespace.has(char);
