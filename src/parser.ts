@@ -159,7 +159,7 @@ export default class Parser {
                         this.error(this.lookaheadSpan, "expected `)`");
                     }
                 }
-                return [tyArray, args]
+                return [tyArray, args];
             });
             if (speculation !== null) {
                 const [tyArray, args] = speculation;
@@ -184,7 +184,12 @@ export default class Parser {
         return this.simpleAtom(this.literal());
     }
 
-    private subatom(start: number, left: AST.Atom | null, minPrec: number, ignoreGt: boolean = false): AST.Atom | null {
+    private subatom(
+        start: number,
+        left: AST.Atom | null,
+        minPrec: number,
+        ignoreGt: boolean = false
+    ): AST.Atom | null {
         while (true) {
             const opInfo = binOps.get(this.lookahead);
             if (opInfo == null) break;
@@ -315,16 +320,24 @@ export default class Parser {
                     this.error(this.lookaheadSpan, "expected `>`");
                 }
             }
-            const params = this.enclose(Token.LeftParen, Token.RightParen, () => {
-                return this.comma(() => {
-                    return this.pattern();
-                });
-            }) ?? [];
+            const params =
+                this.enclose(Token.LeftParen, Token.RightParen, () => {
+                    return this.comma(() => {
+                        return this.pattern();
+                    });
+                }) ?? [];
             let returnTy = undefined;
             if (this.eat(Token.Colon)) {
                 returnTy = this.atom();
             }
-            const signature = new AST.FunctionSignature(this.from(start), exported, name, ty !== null ? filterNull(ty) : null, filterNull(params), returnTy);
+            const signature = new AST.FunctionSignature(
+                this.from(start),
+                exported,
+                name,
+                ty !== null ? filterNull(ty) : null,
+                filterNull(params),
+                returnTy
+            );
             const body = this.statements();
             return new AST.FunctionDeclaration(this.from(start), signature, body);
         }
@@ -461,7 +474,7 @@ export default class Parser {
                     return;
                 }
                 if (this.topLevelContext > TopLevelContext.Imports) {
-                    this.error(import_.span, "Move this import before all items and host imports.")
+                    this.error(import_.span, "Move this import before all items and host imports.");
                 } else {
                     this.topLevelContext = TopLevelContext.Imports;
                 }
@@ -496,7 +509,7 @@ const heapTy = new Map([
     ["i8", AST.HeapTyEnum.I8],
     ["u8", AST.HeapTyEnum.U8],
     ["i16", AST.HeapTyEnum.I16],
-    ["u16", AST.HeapTyEnum.U16],
+    ["u16", AST.HeapTyEnum.U16]
 ]);
 
 const stackTy = new Map([
@@ -505,7 +518,7 @@ const stackTy = new Map([
     ["f32", AST.StackTyEnum.F32],
     ["i64", AST.StackTyEnum.I64],
     ["u64", AST.StackTyEnum.U64],
-    ["f64", AST.StackTyEnum.F64],
+    ["f64", AST.StackTyEnum.F64]
 ]);
 
 const assignOps = new Map([
@@ -519,7 +532,7 @@ const assignOps = new Map([
     [Token.RightAngleRightAngleEquals, AST.BinOp.Shr],
     [Token.AmpersandEquals, AST.BinOp.And],
     [Token.PipeEquals, AST.BinOp.Or],
-    [Token.CaretEquals, AST.BinOp.Xor],
+    [Token.CaretEquals, AST.BinOp.Xor]
 ]);
 
 const binOps = new Map([
@@ -546,10 +559,16 @@ const unOps = new Map([
     [Token.Exclamation, AST.UnOp.LNot],
     [Token.Tilde, AST.UnOp.BNot],
     [Token.Minus, AST.UnOp.Neg]
-])
+]);
 
 const statementRecovery = new Set([Token.Semicolon, Token.RightBrace, Token.EOF]);
-const topLevelRecovery = new Set([Token.Import, Token.Function, Token.Type, Token.Export, Token.EOF]);
+const topLevelRecovery = new Set([
+    Token.Import,
+    Token.Function,
+    Token.Type,
+    Token.Export,
+    Token.EOF
+]);
 enum TopLevelContext {
     Imports,
     HostImports,
