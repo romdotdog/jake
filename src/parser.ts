@@ -214,7 +214,13 @@ export default class Parser {
     }
 
     private atom(ignoreGt: boolean = false): AST.Atom | null {
-        return this.subatom(this.start, this.primaryAtom(), 0, ignoreGt);
+        const start = this.start;
+        const pure = this.eat(Token.Pure);
+        const atom = this.subatom(this.start, this.primaryAtom(), 0, ignoreGt);
+        if (pure) {
+            return new AST.Pure(this.from(start), atom);
+        }
+        return atom;
     }
 
     private atomArray(): AST.Atom[] {

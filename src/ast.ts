@@ -65,6 +65,15 @@ export class Assign extends Statement {
 
 export abstract class Atom extends Statement { }
 
+export class Pure extends Atom {
+    constructor(
+        span: Span,
+        public expr: Atom | null
+    ) {
+        super(span);
+    }
+}
+
 export class Ascription extends Atom {
     constructor(
         span: Span,
