@@ -413,7 +413,7 @@ export default class Parser {
                     break;
                 }
             }
-            if (this.eat(Token.Semicolon)) {
+            if (!this.eat(Token.Semicolon)) {
                 this.error(this.span, "expected semicolon after import");
             }
             return import_;
