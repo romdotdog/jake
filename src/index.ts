@@ -1,4 +1,5 @@
 import Lexer, { Token } from "./lexer.js";
+import Parser from "./parser.js";
 import System from "./system.js";
 
 class Toolchain {
@@ -7,14 +8,15 @@ class Toolchain {
 
 	private traverse(path: string) {
 		const src = System.load(path);
-		const lexer = new Lexer(src);
-		while (true) {
-			const token = lexer.next();
-			console.log(token, lexer.buffer);
-			if (token == Token.EOF) {
-				break;
-			}
-		}
+		/*const lexer = new Lexer(src);
+		let token;
+		do {
+			token = lexer.next();
+			console.log(token);
+		} while (token != Token.EOF);*/
+
+		const parser = new Parser(new Lexer(src));
+		console.log(JSON.stringify(parser.parse()));
 	}
 
 	constructor(path: string) {

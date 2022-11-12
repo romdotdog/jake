@@ -1,1 +1,3 @@
-"hello\nworld"
+function hello(t: A<B,C>(D)) {
+    
+}

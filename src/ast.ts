@@ -3,7 +3,7 @@ import { Span } from "./lexer";
 export class Source {
     constructor(
         public imports: Import[],
-        public hostImports: Import[],
+        public hostImports: HostImport[],
         public items: Item[]
     ) { }
 }
@@ -36,8 +36,8 @@ export abstract class Statement {
 export class Let extends Statement {
     constructor(
         span: Span,
-        public pattern: Pattern,
-        public expr: Atom
+        public pattern: Pattern | null,
+        public expr: Atom | null
     ) {
         super(span);
     }
@@ -46,7 +46,7 @@ export class Let extends Statement {
 export class Return extends Statement {
     constructor(
         span: Span,
-        public expr: Atom
+        public expr: Atom | null
     ) {
         super(span);
     }
@@ -55,34 +55,15 @@ export class Return extends Statement {
 export class Assign extends Statement {
     constructor(
         span: Span,
-        public left: Atom,
-        public right: Atom
-    ) {
-        super(span);
-    }
-}
-
-export class AssignOp extends Statement {
-    constructor(
-        span: Span,
         public kind: BinOp,
-        public left: Atom,
-        public right: Atom
+        public left: Atom | null,
+        public right: Atom | null
     ) {
         super(span);
     }
 }
 
 export abstract class Atom extends Statement { }
-
-export class AtomArray extends Atom {
-    constructor(
-        span: Span,
-        public atoms: Atom[]
-    ) {
-        super(span);
-    }
-}
 
 export class Ascription extends Atom {
     constructor(
@@ -98,8 +79,18 @@ export class Binary extends Atom {
     constructor(
         span: Span,
         public kind: BinOp,
-        public left: Atom,
-        public right: Atom,
+        public left: Atom | null,
+        public right: Atom | null,
+    ) {
+        super(span);
+    }
+}
+
+export class Unary extends Atom {
+    constructor(
+        span: Span,
+        public kind: UnOp,
+        public right: Atom | null,
     ) {
         super(span);
     }
@@ -108,8 +99,19 @@ export class Binary extends Atom {
 export class Call extends Atom {
     constructor(
         span: Span,
-        public base: Atom,
+        public base: Atom | null,
+        public ty: Atom[] | null,
         public args: Atom[],
+    ) {
+        super(span);
+    }
+}
+
+export class TypeCall extends Atom {
+    constructor(
+        span: Span,
+        public base: Atom | null,
+        public ty: Atom[],
     ) {
         super(span);
     }
@@ -119,6 +121,15 @@ export class Product extends Atom {
     constructor(
         span: Span,
         public fields: Atom[],
+    ) {
+        super(span);
+    }
+}
+
+export class Parentheses extends Atom {
+    constructor(
+        span: Span,
+        public inner: Atom[],
     ) {
         super(span);
     }
@@ -195,8 +206,10 @@ export abstract class Item extends Statement { }
 export class FunctionSignature {
     constructor(
         public span: Span,
-        public name: string,
-        public params: Pattern[]
+        public name: Span,
+        public ty: Atom[] | null,
+        public params: Pattern[],
+        public returnTy: Pattern | undefined | null,
     ) { }
 }
 
@@ -220,7 +233,7 @@ export class Binding extends Pattern {
     constructor(
         span: Span,
         public name: Span,
-        public ty: Atom
+        public ty: Atom | null
     ) {
         super(span);
     }
@@ -233,11 +246,14 @@ export enum UnOp {
 }
 
 export enum BinOp {
+    Id,
     Mul,
     Div,
     Mod,
     Add,
     Sub,
+    Shl,
+    Shr,
     Lt,
     Le,
     Gt,

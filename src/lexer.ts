@@ -1,6 +1,6 @@
 // heavily based on llex.c
 export default class Lexer {
-	private lines: number[] = [];
+	private lines: Set<number> = new Set();
 	private srcLength: number;
 
 	public buffer: string | number | null = null;
@@ -32,7 +32,7 @@ export default class Lexer {
 		if (isNewline(current)) {
 			this.skip();
 		}
-		this.lines.push(this.p);
+		this.lines.add(this.p);
 	}
 
 	private lookahead(f: () => boolean): boolean {
@@ -273,7 +273,7 @@ export default class Lexer {
 						return Token.Number;
 					}
 					const start = this.p;
-					while (!this.orEOF(isSpace(this.get())));
+					while (!identifierStopSet.has(this.get()));
 					const buffer = this.src.substring(start, this.p);
 					const lookup = keywords.get(buffer);
 					if (lookup !== undefined) {
@@ -289,6 +289,7 @@ export default class Lexer {
 
 const escape = new Map([["b", "\b"], ["f", "\f"], ["n", "\n"], ["r", "\r"], ["t", "\t"], ["v", "\v"], ["\"", "\""], ["\\", "\\"]])
 const whitespace = new Set([" ", "\n", "\t", "\v", "\f", "\r"]);
+const identifierStopSet = new Set(["", "*", "/", "%", "+", "-", "<", ">", "=", "!", "&", "|", "^", "~", "(", ")", "{", "}", ":", ";", ".", ",", "\"", ...whitespace]);
 function isSpace(char: string) {
 	return whitespace.has(char);
 }
