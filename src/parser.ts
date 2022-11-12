@@ -296,7 +296,7 @@ export default class Parser {
         return null;
     }
 
-    private function_(): AST.Item | null {
+    private function_(exported: boolean): AST.Item | null {
         const start = this.start;
         if (this.eat(Token.Ident)) {
             const name = this.span;
@@ -318,7 +318,7 @@ export default class Parser {
             if (this.eat(Token.Colon)) {
                 returnTy = this.atom();
             }
-            const signature = new AST.FunctionSignature(this.from(start), name, ty !== null ? filterNull(ty) : null, filterNull(params), returnTy);
+            const signature = new AST.FunctionSignature(this.from(start), exported, name, ty !== null ? filterNull(ty) : null, filterNull(params), returnTy);
             const body = this.statements();
             return new AST.FunctionDeclaration(this.from(start), signature, body);
         }
@@ -461,13 +461,16 @@ export default class Parser {
                 }
                 this.source.imports.push(import_);
             }
-        } else if (this.eat(Token.Function)) {
-            const function_ = this.function_();
-            if (function_ == null) {
-                this.recoverTopLevel();
-                return;
+        } else {
+            const exported = this.eat(Token.Export);
+            if (this.eat(Token.Function)) {
+                const function_ = this.function_(exported);
+                if (function_ == null) {
+                    this.recoverTopLevel();
+                    return;
+                }
+                this.source.items.push(function_);
             }
-            this.source.items.push(function_);
         }
     }
 

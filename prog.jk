@@ -1,1 +1,5 @@
 import "prog2.jk";
+
+export function id(x: u32) {
+    return x;
+}

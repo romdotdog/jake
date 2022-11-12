@@ -206,6 +206,7 @@ export abstract class Item extends Statement { }
 export class FunctionSignature {
     constructor(
         public span: Span,
+        public exported: boolean,
         public name: Span,
         public ty: Atom[] | null,
         public params: Pattern[],
