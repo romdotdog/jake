@@ -4,13 +4,13 @@ import * as AST from "./ast.js";
 export default class Parser {
     private lookahead: Token;
     private buffer: number | string | null = null;
-    private start: number = 0;
-    private end: number = 0;
+    private start = 0;
+    private end = 0;
     private topLevelContext = TopLevelContext.Imports;
     private source = new AST.Source([], [], []);
     private quiet = false;
 
-    private error(span: Span, message: string, important: boolean = false) {
+    private error(span: Span, message: string, important = false) {
         if (!(important || this.quiet))
             console.log(`${span.start} - ${span.end} / "${this.lexer.link(span)}": ${message}`);
     }
@@ -188,7 +188,7 @@ export default class Parser {
         start: number,
         left: AST.Atom | null,
         minPrec: number,
-        ignoreGt: boolean = false
+        ignoreGt = false
     ): AST.Atom | null {
         while (true) {
             const opInfo = binOps.get(this.lookahead);
@@ -197,7 +197,7 @@ export default class Parser {
             if (ignoreGt && op == AST.BinOp.Gt) break;
             if (prec >= minPrec) {
                 this.next();
-                let rightStart = this.start;
+                const rightStart = this.start;
                 let right = this.primaryAtom();
                 while (true) {
                     const nOpInfo = binOps.get(this.lookahead);
@@ -218,7 +218,7 @@ export default class Parser {
         return left;
     }
 
-    private atom(ignoreGt: boolean = false): AST.Atom | null {
+    private atom(ignoreGt = false): AST.Atom | null {
         const start = this.start;
         const pure = this.eat(Token.Pure);
         const atom = this.subatom(this.start, this.primaryAtom(), 0, ignoreGt);

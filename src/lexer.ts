@@ -36,7 +36,7 @@ export default class Lexer {
     }
 
     private lookahead(f: () => boolean): boolean {
-        let position = this.p;
+        const position = this.p;
         const success = f();
         if (!success) {
             this.p = position;
@@ -233,7 +233,7 @@ export default class Lexer {
                     return Token.Period;
                 }
                 case '"': {
-                    let chunks = [];
+                    const chunks = [];
                     let current = this.get();
                     let start = this.p;
                     let closed = true;
