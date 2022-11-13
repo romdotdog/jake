@@ -1,6 +1,6 @@
 // heavily based on llex.c
 export default class Lexer {
-    private lines: Set<number> = new Set();
+    private lines: number[] = [];
     private srcLength: number;
 
     public buffer: string | number | null = null;
@@ -32,7 +32,9 @@ export default class Lexer {
         if (isNewline(current)) {
             this.skip();
         }
-        this.lines.add(this.p);
+        if (this.p > this.lines[this.lines.length - 1]) {
+            this.lines.push(this.p);
+        }
     }
 
     private lookahead(f: () => boolean): boolean {

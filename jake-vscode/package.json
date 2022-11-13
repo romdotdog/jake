@@ -1,0 +1,45 @@
+{
+    "name": "jake-vscode",
+    "version": "0.0.0",
+    "description": "The VSCode extension for Jake.",
+    "publisher": "rom",
+    "repository": {
+        "type": "git",
+        "url": "git+ssh://git@github.com/romdotdog/jake.git"
+    },
+    "author": "rom",
+    "license": "UNLICENSED",
+    "bugs": {
+        "url": "https://github.com/romdotdog/jake/issues"
+    },
+    "homepage": "https://github.com/romdotdog/jake#readme",
+    "dependencies": {
+        "vscode-languageclient": "^8.0.2"
+    },
+    "devDependencies": {
+        "@types/node": "^18.11.9",
+        "@types/vscode": "^1.73.0"
+    },
+    "engines": {
+        "vscode": "^1.54.0"
+    },
+    "activationEvents": [
+        "onLanguage:jake"
+    ],
+    "main": "./dist/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "jake",
+                "extensions": [
+                    ".jk"
+                ],
+                "aliases": [
+                    "Jake",
+                    "jake"
+                ],
+                "configuration": "./language.json"
+            }
+        ]
+    }
+}

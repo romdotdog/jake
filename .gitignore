@@ -1,4 +1,4 @@
 dist
 node_modules
 .gitpod.yml
-.vscode
+.vscode/settings.json

@@ -1,5 +1,6 @@
 import Lexer, { Span, Token } from "./lexer.js";
 import * as AST from "./ast.js";
+import System, { DiagnosticSeverity } from "./system.js";
 
 export default class Parser {
     private lookahead: Token;
@@ -11,8 +12,15 @@ export default class Parser {
     private quiet = false;
 
     private error(span: Span, message: string, important = false) {
-        if (!(important || this.quiet))
+        if (!(important || this.quiet)) {
+            this.system.error({
+                span,
+                message,
+                severity: DiagnosticSeverity.Error
+            });
+
             console.log(`${span.start} - ${span.end} / "${this.lexer.link(span)}": ${message}`);
+        }
     }
 
     private from(start: number): Span {
@@ -52,7 +60,7 @@ export default class Parser {
         return result;
     }
 
-    constructor(private lexer: Lexer) {
+    constructor(private system: System, private lexer: Lexer) {
         this.lookahead = this.lexer.next();
     }
 

@@ -1,7 +1,8 @@
+import { join } from "path";
 import { Source } from "./ast.js";
-import Lexer, { Token } from "./lexer.js";
+import Lexer from "./lexer.js";
 import Parser from "./parser.js";
-import System from "./system.js";
+import System, { ChildSystem } from "./system.js";
 
 class Toolchain {
     private deps: Dep[] = [];
@@ -9,8 +10,8 @@ class Toolchain {
     private pathToDep: Map<string, Dep> = new Map();
 
     private traverse(path: string): Dep {
-        const src = System.load(path);
-        const ast = new Parser(new Lexer(src)).parse();
+        const src = this.system.load(path);
+        const ast = new Parser(this.system, new Lexer(src)).parse();
         const dep = new Dep(this.deps.length, path, src, ast);
         this.deps.push(dep);
         this.pathToDep.set(path, dep);
@@ -18,15 +19,15 @@ class Toolchain {
 
         for (const import_ of ast.imports) {
             const relativePath = import_.path;
-            const path = System.resolve(relativePath.value);
-            const importDep = this.pathToDep.get(path);
+            const importPath = this.system.resolve(join(path, "..", relativePath.value));
+            const importDep = this.pathToDep.get(importPath);
             if (importDep !== undefined) {
                 dep.imports.push(importDep);
                 if (importDep.onStack) {
                     dep.llv = Math.min(dep.llv, importDep.idx);
                 }
             } else {
-                const importDep = this.traverse(path);
+                const importDep = this.traverse(importPath);
                 dep.imports.push(importDep);
                 dep.llv = Math.min(dep.llv, importDep.llv);
             }
@@ -49,8 +50,10 @@ class Toolchain {
         return dep;
     }
 
-    constructor(path: string) {
-        this.traverse(System.resolve(path));
+    constructor(private system: System) {}
+
+    compile(root: string) {
+        this.traverse(this.system.resolve(root));
     }
 }
 
@@ -63,4 +66,7 @@ class Dep {
     }
 }
 
-const toolchain = new Toolchain("prog.jk");
+if (process.argv.includes("--child")) {
+    const toolchain = new Toolchain(new ChildSystem());
+    toolchain.compile(process.argv[2]);
+}

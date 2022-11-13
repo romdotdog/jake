@@ -1,0 +1,15 @@
+{
+    "name": "jakec",
+    "version": "0.0.0",
+    "description": "An experimental compiler.",
+    "repository": {
+        "type": "git",
+        "url": "git+ssh://git@github.com/romdotdog/jake.git"
+    },
+    "author": "rom",
+    "license": "UNLICENSED",
+    "bugs": {
+        "url": "https://github.com/romdotdog/jake/issues"
+    },
+    "homepage": "https://github.com/romdotdog/jake#readme"
+}

@@ -6,5 +6,7 @@
         },
         "target": "es2022"
     },
-    "isModule": true
+    "module": {
+        "type": "commonjs"
+    }
 }
