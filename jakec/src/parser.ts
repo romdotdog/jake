@@ -135,7 +135,13 @@ export default class Parser {
         const start = this.start;
         if (this.eat(Token.LeftParen)) {
             const array = this.atomArray();
+            if (!this.eat(Token.RightParen)) {
+                this.error(this.span, "expected `)` to terminate call");
+            }
             return this.simpleAtom(new AST.Call(this.from(start), base, null, array));
+        } else if (this.eat(Token.Colon)) {
+            const ty = this.atom();
+            return new AST.Ascription(this.from(start), base, ty);
         } else if (this.lookahead == Token.LeftAngle) {
             // Here be dragons 🐉
             type Speculation = [tyArray: AST.Atom[], args: AST.Atom[] | null] | null;
@@ -249,7 +255,10 @@ export default class Parser {
     private statement(): AST.Statement | null {
         const start = this.start;
         if (this.eat(Token.Let)) {
-            const pattern = this.pattern();
+            let pattern = undefined;
+            if (this.eat(Token.Semicolon)) {
+                pattern = this.atom();
+            }
             if (this.eat(Token.Equals)) {
                 const atom = this.atom();
                 return new AST.Let(this.from(start), pattern, atom);
@@ -301,20 +310,6 @@ export default class Parser {
         return statements;
     }
 
-    private pattern(): AST.Pattern | null {
-        if (this.eat(Token.Ident)) {
-            const start = this.start;
-            const ident = this.span;
-            if (!this.eat(Token.Colon)) {
-                this.error(this.lookaheadSpan, "expected `:` as part of binding");
-            }
-            const ty = this.atom();
-            return new AST.Binding(this.from(start), ident, ty);
-        }
-        this.error(this.lookaheadSpan, "invalid pattern");
-        return null;
-    }
-
     private function_(exported: boolean): AST.Item | null {
         const start = this.start;
         if (this.eat(Token.Ident)) {
@@ -331,7 +326,7 @@ export default class Parser {
             const params =
                 this.enclose(Token.LeftParen, Token.RightParen, () => {
                     return this.comma(() => {
-                        return this.pattern();
+                        return this.atom();
                     });
                 }) ?? [];
             let returnTy = undefined;
@@ -348,6 +343,8 @@ export default class Parser {
             );
             const body = this.statements();
             return new AST.FunctionDeclaration(this.from(start), signature, body);
+        } else {
+            this.error(this.span, "expected identifier for function");
         }
         return null;
     }
@@ -451,6 +448,28 @@ export default class Parser {
     }
 
     private hostImport(start: number): AST.HostImport | null {
+        if (this.eat(Token.String)) {
+            const path = this.readStringLiteral();
+            if (this.eat(Token.As)) {
+                if (this.eat(Token.Ident)) {
+                    const name = this.span;
+                    if (!this.eat(Token.Colon)) {
+                        this.error(this.span, "expected `:`");
+                    }
+                    const atom = this.atom();
+                    if (!this.eat(Token.Semicolon)) {
+                        this.error(this.span, "expected semicolon after import");
+                    }
+                    return new AST.HostImport(this.from(start), path, name, atom);
+                } else {
+                    this.error(this.span, "expected identifier after `as`");
+                }
+            } else {
+                this.error(this.span, "expected `as` in host import");
+            }
+        } else {
+            this.error(this.span, "expected import path");
+        }
         return null;
     }
 
@@ -470,7 +489,7 @@ export default class Parser {
                     return;
                 }
                 if (this.topLevelContext > TopLevelContext.HostImports) {
-                    this.error(hostImport.span, "Move this import before all items.");
+                    this.error(hostImport.span, "move this import before all items");
                 } else {
                     this.topLevelContext = TopLevelContext.HostImports;
                 }
@@ -482,7 +501,7 @@ export default class Parser {
                     return;
                 }
                 if (this.topLevelContext > TopLevelContext.Imports) {
-                    this.error(import_.span, "Move this import before all items and host imports.");
+                    this.error(import_.span, "move this import before all items and host imports");
                 } else {
                     this.topLevelContext = TopLevelContext.Imports;
                 }
@@ -497,6 +516,10 @@ export default class Parser {
                     return;
                 }
                 this.source.items.push(function_);
+            } else {
+                this.error(this.span, "expected `function` or `type` after export");
+                this.recoverTopLevel();
+                return;
             }
         }
     }

@@ -19,7 +19,7 @@ export class HostImport {
         public span: Span,
         public path: StringLiteral,
         public name: Span,
-        public ty: Atom
+        public ty: Atom | null
     ) {}
 }
 
@@ -28,7 +28,7 @@ export abstract class Statement {
 }
 
 export class Let extends Statement {
-    constructor(span: Span, public pattern: Pattern | null, public expr: Atom | null) {
+    constructor(span: Span, public pattern: Atom | null | undefined, public expr: Atom | null) {
         super(span);
     }
 }
@@ -59,7 +59,7 @@ export class Pure extends Atom {
 }
 
 export class Ascription extends Atom {
-    constructor(span: Span, public expr: Atom, public ty: Atom) {
+    constructor(span: Span, public expr: Atom | null, public ty: Atom | null) {
         super(span);
     }
 }
@@ -170,23 +170,13 @@ export class FunctionSignature {
         public exported: boolean,
         public name: Span,
         public ty: Atom[] | null,
-        public params: Pattern[],
-        public returnTy: Pattern | undefined | null
+        public params: Atom[],
+        public returnTy: Atom | null | undefined
     ) {}
 }
 
 export class FunctionDeclaration extends Item {
     constructor(span: Span, public sig: FunctionSignature, public body: Statement[]) {
-        super(span);
-    }
-}
-
-export abstract class Pattern {
-    constructor(public span: Span) {}
-}
-
-export class Binding extends Pattern {
-    constructor(span: Span, public name: Span, public ty: Atom | null) {
         super(span);
     }
 }

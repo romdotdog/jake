@@ -1,5 +1,6 @@
 import "prog2.jk";
+import host "hello/world" as hello: i32 -> i32;
 
-export function id(x: u32) {
-    return x;
+export function hello2(x: i32): i32 {
+    return hello(x);
 }
