@@ -23,115 +23,100 @@ export class HostImport {
     ) {}
 }
 
-export abstract class Statement {
+export type Statement = Let | Return | Assign | Atom | Item;
+
+export class Let {
+    constructor(
+        public span: Span,
+        public pattern: Atom | null | undefined,
+        public expr: Atom | null
+    ) {}
+}
+
+export class Return {
+    constructor(public span: Span, public expr: Atom | null) {}
+}
+
+export class Assign {
+    constructor(
+        public span: Span,
+        public kind: BinOp,
+        public left: Atom | null,
+        public right: Atom | null
+    ) {}
+}
+
+export type Atom =
+    | Mut
+    | Pure
+    | Ascription
+    | Binary
+    | Unary
+    | Call
+    | TypeCall
+    | Product
+    | NumberLiteral
+    | StringLiteral
+    | Ident
+    | HeapTy
+    | StackTy;
+
+export class Mut {
+    constructor(public span: Span, public expr: Atom | null) {}
+}
+
+export class Pure {
+    constructor(public span: Span, public expr: Atom | null) {}
+}
+
+export class Ascription {
+    constructor(public span: Span, public expr: Atom | null, public ty: Atom | null) {}
+}
+
+export class Binary {
+    constructor(
+        public span: Span,
+        public kind: BinOp,
+        public left: Atom | null,
+        public right: Atom | null
+    ) {}
+}
+
+export class Unary {
+    constructor(public span: Span, public kind: UnOp, public right: Atom | null) {}
+}
+
+export class Call {
+    constructor(
+        public span: Span,
+        public base: Atom | null,
+        public ty: Atom[] | null,
+        public args: Array<Atom | null>
+    ) {}
+}
+
+export class TypeCall {
+    constructor(public span: Span, public base: Atom | null, public ty: Atom[]) {}
+}
+
+export class Product {
+    constructor(public span: Span, public fields: Array<Atom | null>) {}
+}
+
+export class NumberLiteral {
+    constructor(public span: Span, public value: number) {}
+}
+
+export class StringLiteral {
+    constructor(public span: Span, public value: string) {}
+}
+
+export class Ident {
     constructor(public span: Span) {}
 }
 
-export class Let extends Statement {
-    constructor(span: Span, public pattern: Atom | null | undefined, public expr: Atom | null) {
-        super(span);
-    }
-}
-
-export class Return extends Statement {
-    constructor(span: Span, public expr: Atom | null) {
-        super(span);
-    }
-}
-
-export class Assign extends Statement {
-    constructor(
-        span: Span,
-        public kind: BinOp,
-        public left: Atom | null,
-        public right: Atom | null
-    ) {
-        super(span);
-    }
-}
-
-export abstract class Atom extends Statement {}
-
-export class Pure extends Atom {
-    constructor(span: Span, public expr: Atom | null) {
-        super(span);
-    }
-}
-
-export class Ascription extends Atom {
-    constructor(span: Span, public expr: Atom | null, public ty: Atom | null) {
-        super(span);
-    }
-}
-
-export class Binary extends Atom {
-    constructor(
-        span: Span,
-        public kind: BinOp,
-        public left: Atom | null,
-        public right: Atom | null
-    ) {
-        super(span);
-    }
-}
-
-export class Unary extends Atom {
-    constructor(span: Span, public kind: UnOp, public right: Atom | null) {
-        super(span);
-    }
-}
-
-export class Call extends Atom {
-    constructor(
-        span: Span,
-        public base: Atom | null,
-        public ty: Atom[] | null,
-        public args: Atom[]
-    ) {
-        super(span);
-    }
-}
-
-export class TypeCall extends Atom {
-    constructor(span: Span, public base: Atom | null, public ty: Atom[]) {
-        super(span);
-    }
-}
-
-export class Product extends Atom {
-    constructor(span: Span, public fields: Atom[]) {
-        super(span);
-    }
-}
-
-export class Parentheses extends Atom {
-    constructor(span: Span, public inner: Atom[]) {
-        super(span);
-    }
-}
-
-export class NumberLiteral extends Atom {
-    constructor(span: Span, public value: number) {
-        super(span);
-    }
-}
-
-export class StringLiteral extends Atom {
-    constructor(span: Span, public value: string) {
-        super(span);
-    }
-}
-
-export class Ident extends Atom {
-    constructor(span: Span) {
-        super(span);
-    }
-}
-
-export class HeapTy extends Atom {
-    constructor(span: Span, public value: HeapTyEnum) {
-        super(span);
-    }
+export class HeapTy {
+    constructor(public span: Span, public value: HeapTyEnum) {}
 }
 
 export enum HeapTyEnum {
@@ -141,10 +126,8 @@ export enum HeapTyEnum {
     U16
 }
 
-export class StackTy extends Atom {
-    constructor(span: Span, public value: StackTyEnum) {
-        super(span);
-    }
+export class StackTy {
+    constructor(public span: Span, public value: StackTyEnum) {}
 }
 
 export enum StackTyEnum {
@@ -156,28 +139,33 @@ export enum StackTyEnum {
     F64
 }
 
-export class Never extends Atom {
-    constructor(span: Span) {
-        super(span);
-    }
+export class Never {
+    constructor(public span: Span) {}
 }
 
-export abstract class Item extends Statement {}
+export type Item = FunctionDeclaration;
 
 export class FunctionSignature {
     constructor(
         public span: Span,
         public exported: boolean,
+        public host: boolean,
         public name: Span,
-        public ty: Atom[] | null,
-        public params: Atom[],
+        public ty: Array<Atom | null> | undefined,
+        public params: Array<Atom | null>,
         public returnTy: Atom | null | undefined
     ) {}
 }
 
-export class FunctionDeclaration extends Item {
-    constructor(span: Span, public sig: FunctionSignature, public body: Statement[]) {
-        super(span);
+export class FunctionDeclaration {
+    constructor(public span: Span, public sig: FunctionSignature, public body: Statement[]) {}
+
+    get name(): Span {
+        return this.sig.name;
+    }
+
+    get exported(): boolean {
+        return this.sig.exported;
     }
 }
 
@@ -221,7 +209,7 @@ export const precedence = new Map([
     [BinOp.Eq, [7, false]],
     [BinOp.Ne, [7, false]],
     [BinOp.And, [6, false]],
-    [BinOp.Or, [5, false]],
-    [BinOp.Xor, [4, false]],
-    [BinOp.Arrow, [3, false]]
+    [BinOp.Arrow, [5, true]],
+    [BinOp.Or, [4, false]],
+    [BinOp.Xor, [3, false]]
 ]);

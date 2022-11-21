@@ -10,10 +10,6 @@ export default class Lexer {
         this.srcLength = src.length;
     }
 
-    public link(span: Span) {
-        return this.src.substring(span.start, span.end);
-    }
-
     private skip() {
         return ++this.p;
     }
@@ -366,6 +362,7 @@ export enum Token {
     Let,
     Else,
     Mut,
+    Never,
     Union,
     Return,
     Continue,
@@ -420,9 +417,11 @@ export enum Token {
     EOF
 }
 
-export interface Span {
-    start: number;
-    end: number;
+export class Span {
+    constructor(public start: number, public end: number) {}
+    link(src: string) {
+        return src.substring(this.start, this.end);
+    }
 }
 
 const keywords = new Map([
@@ -437,6 +436,7 @@ const keywords = new Map([
     ["if", Token.If],
     ["let", Token.Let],
     ["else", Token.Else],
+    ["never", Token.Never],
     ["mut", Token.Mut],
     ["pure", Token.Pure],
     ["union", Token.Union],

@@ -18,13 +18,11 @@ export default class Parser {
                 message,
                 severity: DiagnosticSeverity.Error
             });
-
-            console.log(`${span.start} - ${span.end} / "${this.lexer.link(span)}": ${message}`);
         }
     }
 
     private from(start: number): Span {
-        return { start, end: this.end };
+        return new Span(start, this.end);
     }
 
     private get span(): Span {
@@ -32,7 +30,7 @@ export default class Parser {
     }
 
     private get lookaheadSpan(): Span {
-        return { start: this.lexer.start, end: this.lexer.p };
+        return new Span(this.lexer.start, this.lexer.p);
     }
 
     private next() {
@@ -120,12 +118,23 @@ export default class Parser {
         } else if (this.eat(Token.String)) {
             return new AST.StringLiteral(this.span, <string>this.buffer);
         } else if (this.eat(Token.LeftParen)) {
-            const start = this.start;
-            const array = this.atomArray();
+            const atom = this.atom();
             if (!this.eat(Token.RightParen)) {
-                this.error(this.lookaheadSpan, "expected `)`", true);
+                this.error(this.lookaheadSpan, "expected `)`");
             }
-            return new AST.Parentheses(this.from(start), array);
+            return atom;
+        } else if (this.eat(Token.LeftBracket)) {
+            const start = this.start;
+            if (this.eat(Token.RightBracket)) {
+                return new AST.Product(this.from(start), []);
+            }
+            const array = this.atomArray();
+            if (!this.eat(Token.RightBracket)) {
+                this.error(this.lookaheadSpan, "expected `]`");
+            }
+            return new AST.Product(this.from(start), array);
+        } else if (this.eat(Token.Never)) {
+            return new AST.Never(this.span);
         }
         this.error(this.lookaheadSpan, "invalid expression");
         return null;
@@ -234,16 +243,20 @@ export default class Parser {
 
     private atom(ignoreGt = false): AST.Atom | null {
         const start = this.start;
+        const mut = this.eat(Token.Mut);
         const pure = this.eat(Token.Pure);
-        const atom = this.subatom(this.start, this.primaryAtom(), 0, ignoreGt);
+        let atom = this.subatom(this.start, this.primaryAtom(), 0, ignoreGt);
         if (pure) {
-            return new AST.Pure(this.from(start), atom);
+            atom = new AST.Pure(this.from(start), atom);
+        }
+        if (mut) {
+            atom = new AST.Mut(this.from(start), atom);
         }
         return atom;
     }
 
-    private atomArray(): AST.Atom[] {
-        return filterNull(this.comma(() => this.atom()));
+    private atomArray(): Array<AST.Atom | null> {
+        return this.comma(() => this.atom());
     }
 
     private eatSemi() {
@@ -310,11 +323,11 @@ export default class Parser {
         return statements;
     }
 
-    private function_(exported: boolean): AST.Item | null {
+    private function_(exported: boolean, host: boolean): AST.Item | null {
         const start = this.start;
         if (this.eat(Token.Ident)) {
             const name = this.span;
-            let ty = null;
+            let ty = undefined;
             if (this.eat(Token.LeftAngle)) {
                 ty = this.comma(() => {
                     return this.atom(true);
@@ -336,9 +349,10 @@ export default class Parser {
             const signature = new AST.FunctionSignature(
                 this.from(start),
                 exported,
+                host,
                 name,
-                ty !== null ? filterNull(ty) : null,
-                filterNull(params),
+                ty !== null ? ty : undefined,
+                params,
                 returnTy
             );
             const body = this.statements();
@@ -509,8 +523,9 @@ export default class Parser {
             }
         } else {
             const exported = this.eat(Token.Export);
+            const host = this.eat(Token.Host);
             if (this.eat(Token.Function)) {
-                const function_ = this.function_(exported);
+                const function_ = this.function_(exported, host);
                 if (function_ == null) {
                     this.recoverTopLevel();
                     return;
@@ -530,10 +545,6 @@ export default class Parser {
         }
         return this.source;
     }
-}
-
-function filterNull<T>(arr: Array<T | null>): T[] {
-    return arr.filter((v: T | null): v is T => v !== null);
 }
 
 const heapTy = new Map([

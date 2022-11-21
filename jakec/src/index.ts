@@ -1,5 +1,6 @@
 import { join } from "path";
 import { Source } from "./ast.js";
+import Checker from "./checker.js";
 import Lexer from "./lexer.js";
 import Parser from "./parser.js";
 import System, { ChildSystem } from "./system.js";
@@ -44,7 +45,7 @@ class Toolchain {
             }
 
             const unit = this.stack.splice(i);
-            console.log(unit);
+            const checker = new Checker(this.system, this.deps, unit);
         }
 
         return dep;
@@ -57,7 +58,7 @@ class Toolchain {
     }
 }
 
-class Dep {
+export class Dep {
     public imports: Dep[] = [];
     public onStack = true;
     public llv: number;
