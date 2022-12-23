@@ -1,14 +1,22 @@
 import { readFileSync } from "fs";
-import { resolve } from "path";
+import { relative, resolve } from "path";
 import { Span } from "./lexer";
 
 export default abstract class System {
-    public load(path: string): string {
-        return readFileSync(path, "utf-8");
+    public load(path: string): string | undefined {
+        try {
+            return readFileSync(path, "utf-8");
+        } catch {
+            return undefined;
+        }
     }
 
     public resolve(path: string): string {
         return resolve(path);
+    }
+
+    public relative(path: string): string {
+        return relative(process.cwd(), path);
     }
 
     public abstract error(x: Diagnostic): void;

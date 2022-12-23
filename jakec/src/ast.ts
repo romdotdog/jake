@@ -26,15 +26,11 @@ export class HostImport {
 export type Statement = Let | Return | Assign | Atom | Item;
 
 export class Let {
-    constructor(
-        public span: Span,
-        public pattern: Atom | null | undefined,
-        public expr: Atom | null
-    ) {}
+    constructor(public span: Span, public pattern: Atom | null, public expr: Atom | null) {}
 }
 
 export class Return {
-    constructor(public span: Span, public expr: Atom | null) {}
+    constructor(public span: Span, public expr: Atom | null | undefined) {}
 }
 
 export class Assign {
@@ -56,6 +52,7 @@ export type Atom =
     | TypeCall
     | Product
     | NumberLiteral
+    | IntegerLiteral
     | StringLiteral
     | Ident
     | HeapTy
@@ -107,6 +104,10 @@ export class NumberLiteral {
     constructor(public span: Span, public value: number) {}
 }
 
+export class IntegerLiteral {
+    constructor(public span: Span, public value: bigint) {}
+}
+
 export class StringLiteral {
     constructor(public span: Span, public value: string) {}
 }
@@ -120,10 +121,10 @@ export class HeapTy {
 }
 
 export enum HeapTyEnum {
-    I8,
-    U8,
-    I16,
-    U16
+    I8 = 0b110000000000000000000000000000000010,
+    U8 = 0b101000000000000000000000000000000100,
+    I16 = 0b111110000000000000000000000000010000,
+    U16 = 0b101101000000000000000000000000100000
 }
 
 export class StackTy {
@@ -131,12 +132,12 @@ export class StackTy {
 }
 
 export enum StackTyEnum {
-    I32,
-    U32,
-    F32,
-    I64,
-    U64,
-    F64
+    F32 = 0b111111111000000000000000000100000000,
+    I32 = 0b111111110110000000000000010000000000,
+    U32 = 0b101101100101000000000000100000000000,
+    F64 = 0b111111111111111000000100000000000000,
+    I64 = 0b111111110111010110010000000000000000,
+    U64 = 0b101101100101000101100000000000000000
 }
 
 export class Never {
@@ -213,3 +214,35 @@ export const precedence = new Map([
     [BinOp.Or, [4, false]],
     [BinOp.Xor, [3, false]]
 ]);
+
+function rev<K, V>(x: [K, V][]): [V, K][] {
+    return x.map(([k, v]) => [v, k]);
+}
+const unOps: [string, UnOp][] = [
+    ["lnot", UnOp.LNot],
+    ["bnot", UnOp.BNot],
+    ["neg", UnOp.Neg]
+];
+
+export const unOpToName = new Map(rev(unOps));
+export const nameToUnOp = new Map(unOps);
+
+const binOps: [string, BinOp][] = [
+    ["mul", BinOp.Mul],
+    ["div", BinOp.Div],
+    ["mod", BinOp.Mod],
+    ["add", BinOp.Add],
+    ["sub", BinOp.Sub],
+    ["lt", BinOp.Lt],
+    ["le", BinOp.Le],
+    ["gt", BinOp.Gt],
+    ["ge", BinOp.Ge],
+    ["eq", BinOp.Eq],
+    ["ne", BinOp.Ne],
+    ["and", BinOp.And],
+    ["or", BinOp.Or],
+    ["xor", BinOp.Xor]
+];
+
+export const binOpToName = new Map(rev(binOps));
+export const nameToBinOp = new Map(binOps);

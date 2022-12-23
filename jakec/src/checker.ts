@@ -9,10 +9,6 @@ function unreachable(_x: never): never {
     throw new Error("unreachable");
 }
 
-function neverLocal(span: Span): Local {
-    return new Local(span, true, new IR.Never(span));
-}
-
 // strange that typescript needs help with this simple type narrow
 // stupid javascript semantics, maybe?
 function isExponential(atom: AST.Binary): atom is AST.Binary & { kind: AST.BinOp.Arrow } {
@@ -25,9 +21,8 @@ function isSum(atom: AST.Binary): atom is AST.Binary & { kind: AST.BinOp.Or } {
 
 export default class Checker {
     private unit: CompDep[] = [];
-    private idxToCompDep: Map<number, CompDep> = new Map();
-    private symToLocal: Map<UnresolvedSym, Local> = new Map();
-    private functionToExponential: Map<AST.FunctionDeclaration, IR.Exponential> = new Map();
+    private symToResolvedSym: Map<UnresolvedSym, ResolvedSym> = new Map();
+    private declToFunction: Map<AST.FunctionDeclaration, IR.SingleFunction> = new Map();
     private resolutionStack: UnresolvedSym[] = [];
     private resolutionSet: Set<UnresolvedSym> = new Set();
 
@@ -41,11 +36,11 @@ export default class Checker {
 
     public exportStage(unit: Dep[]) {
         for (const dep of unit) {
-            const namespace = new Namespace();
+            const scope = new Scope();
             const exported: Map<string, UnresolvedSym> = new Map();
             for (const item of dep.ast.items) {
                 const name = item.name.link(dep.src);
-                const nativeSym = namespace.get(name);
+                const nativeSym = scope.getSameScope(name);
                 if (nativeSym !== undefined) {
                     if (nativeSym instanceof UnresolvedFunctions) {
                         nativeSym.items.push(item);
@@ -53,7 +48,7 @@ export default class Checker {
                         throw new Error("invariant violated");
                     }
                 } else {
-                    namespace.set(name, new UnresolvedFunctions([item]));
+                    scope.set(name, new UnresolvedFunctions([item]));
                 }
                 if (item.exported) {
                     const exportedSym = exported.get(name);
@@ -69,67 +64,106 @@ export default class Checker {
                 }
             }
 
-            const compDep = new CompDep(dep, namespace, exported);
+            const compDep = new CompDep(dep, scope, exported);
             this.unit.push(compDep);
             this.idxToCompDep.set(dep.idx, compDep);
         }
     }
 
     public importStage() {
-        for (const { file, namespace } of this.unit) {
+        for (const { file, scope: scope } of this.unit) {
             const importIdx = file.imports;
             const imports = file.ast.imports;
             for (let i = 0; i < importIdx.length; i++) {
-                const idx = importIdx[i].idx;
                 const import_ = imports[i];
+                const importRawDep = importIdx[i];
+                if (importRawDep === undefined) {
+                    this.error(import_.path.span, "unable to open file");
+                    // TODO: never the import
+                    continue;
+                }
+                const idx = importRawDep.idx;
                 const importDep = this.idxToCompDep.get(idx);
-                if (importDep) {
-                    for (const item of import_.with_) {
-                        const originalName = item[0].link(file.src);
-                        const newName = item[1].link(file.src);
-                        const sym = importDep.exported.get(originalName);
-                        if (sym) {
-                            const nativeSym = namespace.get(newName);
-                            if (nativeSym) {
-                                if (
-                                    sym instanceof UnresolvedFunctions &&
-                                    nativeSym instanceof UnresolvedFunctions
-                                ) {
-                                    Array.prototype.push.apply(nativeSym.items, sym.items);
-                                } else {
-                                    namespace.set(newName, neverLocal(item[1]));
-                                    this.error(item[1], "cannot use this name");
-                                }
-                            } else if (sym instanceof UnresolvedFunctions) {
-                                namespace.set(newName, new UnresolvedFunctions(sym.items.slice()));
+                if (importDep === undefined) {
+                    throw new Error("imported an unresolved module");
+                }
+                for (const item of import_.with_) {
+                    const originalName = item[0].link(file.src);
+                    const newName = item[1].link(file.src);
+                    const sym = importDep.exported.get(originalName);
+                    if (sym) {
+                        const nativeSym = scope.find(newName);
+                        if (nativeSym) {
+                            if (
+                                sym instanceof UnresolvedFunctions &&
+                                nativeSym instanceof UnresolvedFunctions
+                            ) {
+                                Array.prototype.push.apply(nativeSym.items, sym.items);
                             } else {
-                                unreachable(sym);
+                                scope.set(newName, new IR.Unreachable(item[1]));
+                                this.error(item[1], "cannot use this name");
                             }
+                        } else if (sym instanceof UnresolvedFunctions) {
+                            scope.set(newName, new UnresolvedFunctions(sym.items.slice()));
                         } else {
-                            namespace.set(newName, neverLocal(item[1]));
-                            this.error(item[0], "cannot find identifier in exports");
+                            unreachable(sym);
                         }
+                    } else {
+                        scope.set(newName, new IR.Unreachable(item[0]));
+                        this.error(item[0], "cannot find identifier in exports");
                     }
-                } else {
-                    this.error(import_.span, "not supported yet");
                 }
             }
-        }
-    }
-
-    constructor(private system: System, public deps: Dep[], unit: Dep[]) {
-        this.exportStage(unit);
-
-        for (const dep of this.unit) {
-            dep.namespace.push();
-            for (const item of dep.exported.values()) {
-                this.resolve(item, dep);
+            for (const hostImport of file.ast.hostImports) {
+                const pathComponents = hostImport.path.value.split("/");
+                const last = pathComponents.length - 1;
+                const functionName = pathComponents[last];
+                const moduleName = pathComponents.slice(0, last).join("/");
+                const name = hostImport.name.link(file.src);
+                let ty: IR.Exponential | IR.Never | null = null;
+                if (hostImport.ty !== null) {
+                    if (hostImport.ty instanceof AST.Binary && isExponential(hostImport.ty)) {
+                        const resolvedTy = this.exponential(hostImport.ty);
+                        if (resolvedTy !== null) {
+                            ty = resolvedTy;
+                        }
+                    } else {
+                        this.error(hostImport.span, "type of host import must be exponential");
+                    }
+                }
+                ty ??= new IR.Never(hostImport.span);
+                const resolvedImport = new IR.HostImport(
+                    IR.labelize(`${file.path}/${name}_${ty.print()}`),
+                    moduleName,
+                    functionName,
+                    ty
+                );
+                this.program.contents.push(resolvedImport);
             }
         }
     }
 
-    private resolve(sym: UnresolvedSym, dep: CompDep): Local {
-        const cached = this.symToLocal.get(sym);
+    constructor(
+        private system: System,
+        private program: IR.Program,
+        private idxToCompDep: Map<number, CompDep>,
+        public deps: Dep[],
+        unit: Dep[]
+    ) {
+        this.exportStage(unit);
+        this.importStage();
+
+        for (const dep of this.unit) {
+            dep.scope.push();
+            for (const item of dep.exported.values()) {
+                console.log(item);
+                this.resolve(item);
+            }
+        }
+    }
+
+    private resolve(sym: UnresolvedSym): ResolvedSym {
+        const cached = this.symToResolvedSym.get(sym);
         if (cached) {
             return cached;
         }
@@ -139,59 +173,80 @@ export default class Checker {
         }
 
         this.addToResolutionStack(sym);
-        const local = this.unsafeResolve(sym, dep);
+        const local = this.unsafeResolve(sym);
         this.popResolutionStack();
 
-        this.symToLocal.set(sym, local);
+        this.symToResolvedSym.set(sym, local);
         return local;
     }
 
-    private unsafeResolve(item: UnresolvedSym, dep: CompDep): Local {
-        if (item instanceof UnresolvedFunctions) {
-            const exp = this.resolveFunctions(item, dep);
-            if (exp === null) {
-                return neverLocal(item.items[0].sig.span);
-            }
-            return new Local(exp.span, false, exp);
+    private unsafeResolve(sym: UnresolvedSym): ResolvedSym {
+        if (sym instanceof UnresolvedFunctions) {
+            return this.resolveFunctions(sym);
         } else {
-            return unreachable(item);
+            return unreachable(sym);
         }
     }
 
-    private resolveFunctions(sym: UnresolvedFunctions, dep: CompDep): IR.ExponentialSum | null {
-        const exponentials = [];
+    private resolveFunctions(sym: UnresolvedFunctions): ResolvedSym {
+        if (sym.items.length == 1) {
+            const fn = sym.items[0];
+            return this.declToFunction.get(fn) ?? this.resolveFunction(fn);
+        }
+
+        const fns: IR.SingleFunction[] = [];
+        const exponentials: IR.Exponential[] = [];
         for (const fn of sym.items) {
-            const exp = this.functionToExponential.get(fn);
-            if (exp !== undefined) {
-                exponentials.push(exp);
-            } else {
-                const exp = this.resolveFunction(fn, dep);
-                if (exp !== null) {
-                    exponentials.push(exp);
-                } else {
-                    return null;
+            const newExp = this.declToFunction.get(fn) ?? this.resolveFunction(fn);
+            if (newExp instanceof IR.Unreachable) {
+                return new IR.Unreachable(sym.items[0].span);
+            }
+            for (const exp of exponentials) {
+                if (newExp.ty.equals(exp)) {
+                    this.error(fn.sig.span, "conflicting implementations");
+                    return new IR.Unreachable(fn.sig.span);
                 }
             }
+            fns.push(newExp);
+            exponentials.push(newExp.ty);
         }
-        return new IR.ExponentialSum(exponentials[0].span, exponentials);
+
+        const nameSpan = sym.items[0].sig.name;
+        const dep = this.deps[nameSpan.idx];
+        return new IR.FunctionSum(
+            sym.items[0].sig.name.link(dep.src),
+            fns,
+            new IR.ExponentialSum(exponentials[0].span, exponentials)
+        );
     }
 
-    private resolveFunction(item: AST.FunctionDeclaration, dep: CompDep): IR.Exponential | null {
+    private resolveFunction(item: AST.FunctionDeclaration): IR.SingleFunction | IR.Unreachable {
         if (item.sig.ty !== undefined) {
             this.error(item.sig.span, "polymorphism is not yet supported");
-            return null;
+            return new IR.Unreachable(item.sig.span);
         }
 
+        const dep = this.idxToCompDep.get(item.span.idx);
+        if (dep === undefined) {
+            throw new Error("couldn't find dep");
+        }
+
+        const tyParams = [];
         const params = [];
         for (const param of item.sig.params) {
             if (param === null) {
-                return null;
+                return new IR.Unreachable(item.sig.span);
             }
             const pattern = this.pattern(param);
             if (pattern === null) {
-                return null;
+                return new IR.Unreachable(param.span);
             }
-            params.push(pattern.ty);
+            tyParams.push(pattern.ty);
+            const name = pattern.untyped.ident.span.link(dep.file.src);
+            params.push(new IR.Local(params.length, name, pattern.untyped.mut, pattern.ty));
+        }
+        if (tyParams.length == 0) {
+            tyParams.push(new IR.Product(item.sig.span, []));
         }
 
         let returnTy: IR.Type;
@@ -201,17 +256,334 @@ export default class Checker {
                 this.error(item.sig.span, "type inference is not yet supported");
             // fallthrough
             case null:
-                return null;
+                return new IR.Unreachable(item.sig.span);
             default: {
                 const resolvedTy = this.ty(returnTyAtom);
                 if (resolvedTy === null) {
-                    return null;
+                    return new IR.Unreachable(item.sig.span);
                 }
                 returnTy = resolvedTy;
             }
         }
 
-        return new IR.Exponential(item.sig.span, false, params, returnTy);
+        const ty = new IR.Exponential(item.sig.span, false, tyParams, returnTy);
+        const name = item.sig.name.link(dep.file.src);
+
+        const binOp = AST.nameToBinOp.get(name);
+        if (binOp && ty.params.length !== 2) {
+            this.error(item.sig.span, "binary operator overloads must take exactly two parameters");
+            return new IR.Unreachable(item.sig.span);
+        }
+
+        const unOp = AST.nameToUnOp.get(name);
+        if (unOp && ty.params.length !== 1) {
+            this.error(item.sig.span, "unary operator overloads must take exactly one parameter");
+            return new IR.Unreachable(item.sig.span);
+        }
+
+        const internalName = IR.labelize(`${dep.file.path}/${name}_${ty.print()}`);
+        const fn = new IR.SingleFunction(internalName, name, ty, params, [], []);
+        this.resolveBody(fn, item.body, dep);
+        return fn;
+    }
+
+    private resolveBody(fn: IR.SingleFunction, body: AST.Statement[], dep: CompDep) {
+        const { file, scope } = dep;
+        scope.push();
+        for (const param of fn.params) {
+            scope.set(param.name, param);
+        }
+        for (const statement of body) {
+            if (this.resolveStatement(fn, statement, dep)) {
+                break;
+            }
+        }
+        scope.pop();
+    }
+
+    private resolveStatement(
+        fn: IR.SingleFunction,
+        statement: AST.Statement,
+        dep: CompDep
+    ): boolean {
+        const { file, scope } = dep;
+        if (statement instanceof AST.Let) {
+            if (statement.pattern === null) {
+                fn.body.push(IR.Unreachable.drop(statement.span));
+                return false;
+            }
+            const pattern = this.pattern(statement.pattern);
+            if (pattern === null) {
+                fn.body.push(IR.Unreachable.drop(statement.pattern.span));
+                return false;
+            }
+
+            const name = pattern.untyped.ident.span.link(dep.file.src);
+            if (statement.expr === null) {
+                const local = fn.addLocal(name, pattern.untyped.mut, new IR.Never(statement.span));
+                scope.set(name, local);
+                return false;
+            }
+
+            // TODO: check expr
+            const local = fn.addLocal(name, pattern.untyped.mut, pattern.ty);
+            scope.set(name, local);
+
+            fn.body.push(new IR.LocalSet(local, this.checkExpr(statement.expr, dep, pattern.ty)));
+            return false;
+        } else if (statement instanceof AST.Assign) {
+            if (statement.left === null) {
+                return false;
+            }
+
+            if (!(statement.left instanceof AST.Ident)) {
+                this.error(statement.left.span, "must be identifier");
+                return false;
+            }
+
+            const name = statement.left.span.link(file.src);
+            const sym = scope.find(name);
+            if (sym === undefined) {
+                this.error(statement.left.span, "variable does not exist");
+                return false;
+            }
+
+            if (sym instanceof IR.Unreachable) {
+                return false;
+            }
+
+            if (sym instanceof UnresolvedFunctions || !sym.mut) {
+                this.error(statement.left.span, "cannot assign to immutable variable");
+                if (sym instanceof UnresolvedFunctions) {
+                    return false;
+                }
+            }
+
+            if (statement.right === null) {
+                fn.body.push(new IR.LocalSet(sym, new IR.Unreachable(statement.span)));
+                return false;
+            }
+
+            fn.body.push(
+                new IR.LocalSet(
+                    sym,
+                    this.checkExpr(
+                        new AST.Binary(
+                            statement.span,
+                            statement.kind,
+                            statement.left,
+                            statement.right
+                        ),
+                        dep,
+                        sym.ty
+                    )
+                )
+            );
+            return false;
+        } else if (statement instanceof AST.Return) {
+            if (statement.expr === null) {
+                return true;
+            }
+
+            let atom: AST.Atom;
+            if (statement.expr === undefined) {
+                atom = new AST.Product(statement.span, []);
+            } else {
+                atom = statement.expr;
+            }
+
+            const expr = this.checkExpr(atom, dep, fn.ty.ret);
+            fn.body.push(new IR.Return(expr));
+            return true;
+        } else if (statement instanceof AST.FunctionDeclaration) {
+            this.error(statement.span, "not yet supported");
+            return false;
+        } else {
+            const expr = this.checkExpr(statement, dep, fn.ty.ret);
+            fn.body.push(new IR.Drop(expr));
+            return false;
+        }
+    }
+
+    // resulting expression is guaranteed to be assignable to ty
+    private checkExpr(atom: AST.Atom, dep: CompDep, ty?: IR.Type): IR.Expression {
+        if (atom instanceof AST.Ascription) {
+            if (atom.expr === null || atom.ty === null) {
+                return new IR.Unreachable(atom.span);
+            }
+            const ty = this.ty(atom.ty);
+            if (ty === null) {
+                return new IR.Unreachable(atom.ty.span);
+            }
+            return this.checkExpr(atom.expr, dep, ty);
+        }
+
+        if (ty === undefined) {
+            this.error(atom.span, "required type annotation");
+            return new IR.Unreachable(atom.span);
+        }
+
+        if (atom instanceof AST.Call) {
+            if (atom.base === null) {
+                return new IR.Unreachable(atom.span);
+            }
+            const params = [];
+            const args = [];
+            for (const arg of atom.args) {
+                if (arg === null) {
+                    return new IR.Unreachable(atom.span);
+                }
+                const resolved = this.checkExpr(arg, dep);
+                args.push(resolved);
+                params.push(resolved.ty);
+            }
+            const base = this.checkExpr(
+                atom.base,
+                dep,
+                new IR.Exponential(atom.span, false, params, ty)
+            );
+            return new IR.Call(atom.span, base, args, ty);
+        } else if (atom instanceof AST.Binary) {
+            if (atom.kind === AST.BinOp.Arrow) {
+                this.error(atom.span, "invalid expression");
+                return new IR.Unreachable(atom.span);
+            }
+            if (atom.left === null || atom.right === null) {
+                return new IR.Unreachable(atom.span);
+            }
+            if (atom.kind === AST.BinOp.Id) {
+                return this.checkExpr(atom.right, dep, ty);
+            }
+            const name = AST.binOpToName.get(atom.kind);
+            if (name === undefined) {
+                throw new Error("unclassified op");
+            }
+            const args = [this.checkExpr(atom.left, dep), this.checkExpr(atom.right, dep)];
+            const params = args.map(v => v.ty);
+            const res = dep.scope.findImplementation(
+                name,
+                new IR.Exponential(atom.span, false, params, ty),
+                v => this.resolve(v)
+            );
+            if (res instanceof IR.Unreachable) {
+                return new IR.Unreachable(atom.span);
+            } else if (res === null) {
+                throw new Error("operator name is local");
+            } else if (res.length == 0) {
+                this.error(atom.span, "no overload found");
+                return new IR.Unreachable(atom.span);
+            } else if (res.length == 1) {
+                return new IR.Call(atom.span, res[0], args, ty);
+            } else {
+                this.error(atom.span, "multiple overloads found");
+                return new IR.Unreachable(atom.span);
+            }
+        } else if (atom instanceof AST.Unary) {
+            if (atom.right === null) {
+                return new IR.Unreachable(atom.span);
+            }
+            const name = AST.unOpToName.get(atom.kind);
+            if (name === undefined) {
+                throw new Error("unclassified op");
+            }
+            const args = [this.checkExpr(atom.right, dep)];
+            const params = args.map(v => v.ty);
+            const res = dep.scope.findImplementation(
+                name,
+                new IR.Exponential(atom.span, false, params, ty),
+                v => this.resolve(v)
+            );
+            if (res instanceof IR.Unreachable) {
+                return new IR.Unreachable(atom.span);
+            } else if (res === null) {
+                throw new Error("operator name is local");
+            } else if (res.length == 0) {
+                this.error(atom.span, "no overload found");
+                return new IR.Unreachable(atom.span);
+            } else if (res.length == 1) {
+                return new IR.Call(atom.span, res[0], args, ty);
+            } else {
+                this.error(atom.span, "multiple overloads found");
+                return new IR.Unreachable(atom.span);
+            }
+        } else if (atom instanceof AST.Ident) {
+            const value = atom.span.link(dep.file.src);
+            if (ty instanceof IR.Exponential) {
+                const res = dep.scope.findImplementation(value, ty, v => this.resolve(v));
+                if (res instanceof IR.Unreachable) {
+                    return new IR.Unreachable(atom.span);
+                } else if (res === null) {
+                    this.error(atom.span, "identifier is not callable");
+                    return new IR.Unreachable(atom.span);
+                } else if (res.length == 0) {
+                    this.error(atom.span, "no implementation found");
+                    return new IR.Unreachable(atom.span);
+                } else if (res.length == 1) {
+                    return res[0];
+                } else {
+                    this.error(atom.span, "multiple implementations found");
+                    return new IR.Unreachable(atom.span);
+                }
+            } else {
+                const res = dep.scope.find(value);
+                if (res === undefined) {
+                    this.error(atom.span, "no symbol found");
+                    return new IR.Unreachable(atom.span);
+                } else if (res instanceof IR.Unreachable) {
+                    return new IR.Unreachable(atom.span);
+                } else if (res instanceof IR.Local) {
+                    if (res.ty.assignableTo(ty)) {
+                        return res;
+                    }
+                    this.error(atom.span, "type mismatch");
+                    return new IR.Unreachable(atom.span);
+                } else if (res instanceof UnresolvedFunctions) {
+                    this.error(atom.span, "type mismatch");
+                    return new IR.Unreachable(atom.span);
+                } else {
+                    unreachable(res);
+                }
+            }
+        } else if (atom instanceof AST.IntegerLiteral) {
+            const virtual = IR.VirtualInteger.fromValue(atom.span, atom.value);
+            if (virtual === null) {
+                this.error(atom.span, "literal too large");
+                return new IR.Unreachable(atom.span);
+            }
+            if (
+                !(ty instanceof IR.StackTy || ty instanceof IR.HeapTy) ||
+                !virtual.assignableTo(ty)
+            ) {
+                this.error(atom.span, "type mismatch");
+                return new IR.Unreachable(atom.span);
+            }
+            return new IR.Integer(atom.span, atom.value, ty);
+        } else if (atom instanceof AST.NumberLiteral) {
+            if (
+                !(ty instanceof IR.StackTy) ||
+                (ty.value !== AST.StackTyEnum.F32 && ty.value !== AST.StackTyEnum.F64)
+            ) {
+                return new IR.Unreachable(atom.span);
+            }
+            return new IR.NumberExpr(atom.span, atom.value, ty);
+        } else if (
+            atom instanceof AST.Mut ||
+            atom instanceof AST.Pure ||
+            atom instanceof AST.HeapTy ||
+            atom instanceof AST.StackTy
+        ) {
+            this.error(atom.span, "invalid expression");
+            return new IR.Unreachable(atom.span);
+        } else if (
+            atom instanceof AST.TypeCall ||
+            atom instanceof AST.Product ||
+            atom instanceof AST.StringLiteral
+        ) {
+            this.error(atom.span, "not yet supported");
+            return new IR.Unreachable(atom.span);
+        } else {
+            return unreachable(atom);
+        }
     }
 
     private pattern(atom: AST.Atom): IR.Pattern | null {
@@ -244,18 +616,14 @@ export default class Checker {
                 this.error(span, "untyped patterns are not yet supported");
                 ty = new IR.Never(span);
             }
-            return new IR.TypedPattern(
-                span,
-                new IR.UntypedPattern(new Span(span.start, atom.span.end), mut, atom),
-                ty
-            );
+            return new IR.TypedPattern(span, new IR.UntypedPattern(span, mut, atom), ty);
         } else {
             this.error(span, "invalid pattern");
             return null;
         }
     }
 
-    private ty(atom: AST.Atom): IR.Type | null {
+    private ty(atom: AST.Atom, prohibitNever = false): IR.Type | null {
         if (atom instanceof AST.Binary) {
             if (isExponential(atom)) {
                 return this.exponential(atom);
@@ -289,6 +657,9 @@ export default class Checker {
         }
 
         if (atom instanceof AST.Never) {
+            if (prohibitNever) {
+                this.error(atom.span, "`never` is not allowed here");
+            }
             return new IR.Never(atom.span);
         }
 
@@ -362,11 +733,20 @@ export default class Checker {
                 );
                 return null;
             }
-            const ty = this.exponential(possibleExp);
-            if (ty === null) {
+            const newExp = this.exponential(possibleExp);
+            if (newExp === null) {
                 return null;
             }
-            exponentials.push(ty);
+            for (const exp of exponentials) {
+                if (newExp.equals(exp)) {
+                    this.error(
+                        newExp.span,
+                        "cannot have two of the same exponential type in the same sum type"
+                    );
+                    return null;
+                }
+            }
+            exponentials.push(newExp);
         }
 
         return new IR.ExponentialSum(atom.span, exponentials);
@@ -386,18 +766,18 @@ export default class Checker {
     }
 }
 
-class CompDep {
+export class CompDep {
     constructor(
         public file: Dep,
-        public namespace: Namespace,
+        public scope: Scope,
         public exported: Map<string, UnresolvedSym>
     ) {}
 }
 
-class Namespace {
-    constructor(private parent?: Namespace, private variables: Map<string, Sym> = new Map()) {}
+class Scope {
+    constructor(private parent?: Scope, private variables: Map<string, Sym> = new Map()) {}
 
-    find(name: string): Sym | null {
+    public find(name: string): Sym | undefined {
         const match = this.variables.get(name);
         if (match !== undefined) {
             return match;
@@ -405,38 +785,74 @@ class Namespace {
         if (this.parent !== undefined) {
             return this.parent.find(name);
         }
-        return null;
+        return undefined;
     }
 
-    get(name: string) {
+    public findImplementation(
+        name: string,
+        ty: IR.Exponential,
+        resolve: (v: UnresolvedFunctions) => ResolvedSym
+    ): IR.SingleFunction[] | IR.Unreachable | null {
+        const sym = this.variables.get(name);
+        if (sym !== undefined) {
+            if (sym instanceof UnresolvedFunctions) {
+                const resolvedSym = resolve(sym);
+                if (resolvedSym instanceof IR.FunctionSum) {
+                    const impls = [];
+                    for (const fn of resolvedSym.impls) {
+                        if (ty.assignableTo(fn.ty)) {
+                            impls.push(fn);
+                        }
+                    }
+                    if (impls.length > 0) {
+                        return impls;
+                    }
+                } else if (resolvedSym instanceof IR.SingleFunction) {
+                    if (ty.assignableTo(resolvedSym.ty)) {
+                        return [resolvedSym];
+                    }
+                } else if (resolvedSym instanceof IR.Unreachable) {
+                    return resolvedSym;
+                } else {
+                    unreachable(resolvedSym);
+                }
+            } else if (sym instanceof IR.Unreachable) {
+                return sym;
+            } else if (sym instanceof IR.Local) {
+                return null;
+            } else {
+                unreachable(sym);
+            }
+        }
+        return this.parent ? this.parent.findImplementation(name, ty, resolve) : [];
+    }
+
+    public getSameScope(name: string) {
         return this.variables.get(name);
     }
 
-    set(name: string, symbol: Sym) {
+    public set(name: string, symbol: Sym) {
         this.variables.set(name, symbol);
     }
 
-    push() {
-        this.parent = new Namespace(this.parent, this.variables);
+    public push() {
+        this.parent = new Scope(this.parent, this.variables);
         this.variables = new Map();
     }
 
-    pop() {
+    public pop() {
         if (this.parent === undefined) {
-            throw new Error("popped root namespace");
+            throw new Error("popped root scope");
         }
         this.variables = this.parent.variables;
         this.parent = this.parent.parent;
     }
 }
 
-type Sym = Local | UnresolvedFunctions;
+type Sym = IR.Local | UnresolvedFunctions | IR.Unreachable;
+type ResolvedSym = IR.FunctionSum | IR.SingleFunction | IR.Unreachable;
 type UnresolvedSym = UnresolvedFunctions;
 
 class UnresolvedFunctions {
     constructor(public items: AST.FunctionDeclaration[]) {}
-}
-
-class Local {
-    constructor(public span: Span, public mut: boolean, public ty: IR.Type) {}
 }

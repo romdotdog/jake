@@ -1,6 +1,7 @@
 import { join } from "path";
 import { Source } from "./ast.js";
-import Checker from "./checker.js";
+import { Program } from "./ir.js";
+import Checker, { CompDep } from "./checker.js";
 import Lexer from "./lexer.js";
 import Parser from "./parser.js";
 import System, { ChildSystem } from "./system.js";
@@ -9,11 +10,17 @@ class Toolchain {
     private deps: Dep[] = [];
     private stack: Dep[] = [];
     private pathToDep: Map<string, Dep> = new Map();
+    private idxToCompDep: Map<number, CompDep> = new Map();
+    private program: Program = new Program();
 
-    private traverse(path: string): Dep {
+    private traverse(path: string): Dep | undefined {
         const src = this.system.load(path);
-        const ast = new Parser(this.system, new Lexer(src)).parse();
-        const dep = new Dep(this.deps.length, path, src, ast);
+        if (src === undefined) {
+            return undefined;
+        }
+        const idx = this.deps.length;
+        const ast = new Parser(this.system, new Lexer(src), idx).parse();
+        const dep = new Dep(idx, path, src, ast);
         this.deps.push(dep);
         this.pathToDep.set(path, dep);
         this.stack.push(dep);
@@ -30,11 +37,12 @@ class Toolchain {
             } else {
                 const importDep = this.traverse(importPath);
                 dep.imports.push(importDep);
-                dep.llv = Math.min(dep.llv, importDep.llv);
+                if (importDep !== undefined) {
+                    dep.llv = Math.min(dep.llv, importDep.llv);
+                }
             }
         }
 
-        const idx = dep.idx;
         if (idx == dep.llv) {
             let i = this.stack.length;
             while (i > 0 && i != idx) {
@@ -45,7 +53,13 @@ class Toolchain {
             }
 
             const unit = this.stack.splice(i);
-            const checker = new Checker(this.system, this.deps, unit);
+            const checker = new Checker(
+                this.system,
+                this.program,
+                this.idxToCompDep,
+                this.deps,
+                unit
+            );
         }
 
         return dep;
@@ -59,7 +73,7 @@ class Toolchain {
 }
 
 export class Dep {
-    public imports: Dep[] = [];
+    public imports: Array<Dep | undefined> = [];
     public onStack = true;
     public llv: number;
     constructor(public idx: number, public path: string, public src: string, public ast: Source) {

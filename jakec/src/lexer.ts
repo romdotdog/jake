@@ -3,7 +3,7 @@ export default class Lexer {
     private lines: number[] = [];
     private srcLength: number;
 
-    public buffer: string | number | null = null;
+    public buffer: string | bigint | number | null = null;
     public start = 0;
     public p = 0;
     constructor(private src: string) {
@@ -52,6 +52,7 @@ export default class Lexer {
 
     private readNumeral() {
         // assert isDigit
+        let float = false;
         let char;
         do {
             char = this.get();
@@ -60,6 +61,7 @@ export default class Lexer {
             const valid = this.lookahead(() => {
                 char = this.get();
                 if (isDigit(char)) {
+                    float = true;
                     do {
                         char = this.get();
                     } while (this.andNotEOF(isDigitOrUnderscore(char)));
@@ -75,6 +77,7 @@ export default class Lexer {
             this.lookahead(() => {
                 char = this.get();
                 if (isDigitPlusOrMinus(char)) {
+                    float = true;
                     do {
                         char = this.get();
                     } while (this.andNotEOF(isDigit(char)));
@@ -83,12 +86,18 @@ export default class Lexer {
                 return false;
             });
         }
+        return float;
     }
 
     private bufferNumeral() {
         const start = this.p;
-        this.readNumeral();
-        this.buffer = parseFloat(this.src.substring(start, this.p));
+        const float = this.readNumeral();
+        const str = this.src.substring(start, this.p);
+        if (float) {
+            this.buffer = parseFloat(str);
+        } else {
+            this.buffer = BigInt(str);
+        }
     }
 
     private maybeTakeEquals(normalToken: Token, equalsToken: Token) {
@@ -418,7 +427,7 @@ export enum Token {
 }
 
 export class Span {
-    constructor(public start: number, public end: number) {}
+    constructor(public idx: number, public start: number, public end: number) {}
     link(src: string) {
         return src.substring(this.start, this.end);
     }

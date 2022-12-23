@@ -1,10 +1,11 @@
 import Lexer, { Span, Token } from "./lexer.js";
 import * as AST from "./ast.js";
 import System, { DiagnosticSeverity } from "./system.js";
+import { Dep } from "./index.js";
 
 export default class Parser {
     private lookahead: Token;
-    private buffer: number | string | null = null;
+    private buffer: number | bigint | string | null = null;
     private start = 0;
     private end = 0;
     private topLevelContext = TopLevelContext.Imports;
@@ -22,7 +23,7 @@ export default class Parser {
     }
 
     private from(start: number): Span {
-        return new Span(start, this.end);
+        return new Span(this.idx, start, this.end);
     }
 
     private get span(): Span {
@@ -30,7 +31,7 @@ export default class Parser {
     }
 
     private get lookaheadSpan(): Span {
-        return new Span(this.lexer.start, this.lexer.p);
+        return new Span(this.idx, this.lexer.start, this.lexer.p);
     }
 
     private next() {
@@ -58,7 +59,7 @@ export default class Parser {
         return result;
     }
 
-    constructor(private system: System, private lexer: Lexer) {
+    constructor(private system: System, private lexer: Lexer, private idx: number) {
         this.lookahead = this.lexer.next();
     }
 
@@ -114,7 +115,13 @@ export default class Parser {
             }
             return new AST.Ident(this.span);
         } else if (this.eat(Token.Number)) {
-            return new AST.NumberLiteral(this.span, <number>this.buffer);
+            if (typeof this.buffer == "number") {
+                return new AST.NumberLiteral(this.span, this.buffer);
+            } else if (typeof this.buffer == "bigint") {
+                return new AST.IntegerLiteral(this.span, this.buffer);
+            } else {
+                throw new Error("buffer error");
+            }
         } else if (this.eat(Token.String)) {
             return new AST.StringLiteral(this.span, <string>this.buffer);
         } else if (this.eat(Token.LeftParen)) {
@@ -268,10 +275,7 @@ export default class Parser {
     private statement(): AST.Statement | null {
         const start = this.start;
         if (this.eat(Token.Let)) {
-            let pattern = undefined;
-            if (this.eat(Token.Semicolon)) {
-                pattern = this.atom();
-            }
+            const pattern = this.atom();
             if (this.eat(Token.Equals)) {
                 const atom = this.atom();
                 return new AST.Let(this.from(start), pattern, atom);
@@ -280,8 +284,11 @@ export default class Parser {
             }
             this.eatSemi();
         } else if (this.eat(Token.Return)) {
-            const atom = this.atom();
-            this.eatSemi();
+            let atom = undefined;
+            if (!this.eat(Token.Semicolon)) {
+                atom = this.atom();
+                this.eatSemi();
+            }
             return new AST.Return(this.from(start), atom);
         }
 
@@ -323,8 +330,7 @@ export default class Parser {
         return statements;
     }
 
-    private function_(exported: boolean, host: boolean): AST.Item | null {
-        const start = this.start;
+    private function_(start: number, exported: boolean, host: boolean): AST.Item | null {
         if (this.eat(Token.Ident)) {
             const name = this.span;
             let ty = undefined;
@@ -525,7 +531,7 @@ export default class Parser {
             const exported = this.eat(Token.Export);
             const host = this.eat(Token.Host);
             if (this.eat(Token.Function)) {
-                const function_ = this.function_(exported, host);
+                const function_ = this.function_(start, exported, host);
                 if (function_ == null) {
                     this.recoverTopLevel();
                     return;
