@@ -405,8 +405,57 @@ export default class Checker {
         }
     }
 
-    // resulting expression is guaranteed to be assignable to ty
     private checkExpr(atom: AST.Atom, dep: CompDep, ty?: IR.Type): IR.Expression {
+        const virtualExpr = this.checkExprInner(atom, dep, ty);
+        if (virtualExpr instanceof IR.VirtualInteger) {
+            if (ty === undefined) {
+                this.error(
+                    atom.span,
+                    "required type annotation (inferred " + virtualExpr.ty.print() + ")"
+                );
+                return new IR.Unreachable(atom.span);
+            } else if (virtualExpr.ty.assignableTo(ty)) {
+                return new IR.Integer(virtualExpr.span, virtualExpr.value, ty);
+            } else {
+                this.error(atom.span, "type mismatch");
+                return new IR.Unreachable(atom.span);
+            }
+        }
+        return virtualExpr;
+    }
+
+    private callWithCoercion(
+        span: Span,
+        fn: IR.Expression,
+        args: IR.VirtualExpression[]
+    ): IR.Call | IR.Unreachable {
+        const coercedArgs = new Array(args.length);
+        if (fn instanceof IR.SingleFunction) {
+            const params = fn.ty.params;
+            for (let i = 0; i < args.length; i++) {
+                const arg = args[i];
+                if (arg instanceof IR.VirtualInteger) {
+                    const destTy = params[i];
+                    if (arg.ty.assignableTo(destTy)) {
+                        coercedArgs[i] = new IR.Integer(arg.span, arg.value, destTy);
+                    } else {
+                        coercedArgs[i] = new IR.Unreachable(arg.span);
+                    }
+                } else {
+                    coercedArgs[i] = arg;
+                }
+            }
+            return new IR.Call(span, fn, coercedArgs, params[params.length - 1]);
+        }
+        return new IR.Unreachable(span);
+    }
+
+    // resulting expression is guaranteed to be assignable to ty
+    private checkExprInner(
+        atom: AST.Atom,
+        dep: CompDep,
+        ty?: IR.VirtualType
+    ): IR.VirtualExpression {
         if (atom instanceof AST.Ascription) {
             if (atom.expr === null || atom.ty === null) {
                 return new IR.Unreachable(atom.span);
@@ -415,7 +464,7 @@ export default class Checker {
             if (ty === null) {
                 return new IR.Unreachable(atom.ty.span);
             }
-            return this.checkExpr(atom.expr, dep, ty);
+            return this.checkExprInner(atom.expr, dep, ty);
         }
 
         if (ty === undefined) {
@@ -433,16 +482,19 @@ export default class Checker {
                 if (arg === null) {
                     return new IR.Unreachable(atom.span);
                 }
-                const resolved = this.checkExpr(arg, dep);
+                const resolved = this.checkExprInner(arg, dep);
                 args.push(resolved);
                 params.push(resolved.ty);
             }
-            const base = this.checkExpr(
+            const base = this.checkExprInner(
                 atom.base,
                 dep,
-                new IR.Exponential(atom.span, false, params, ty)
+                new IR.VirtualExponential(atom.span, false, params, ty)
             );
-            return new IR.Call(atom.span, base, args, ty);
+            if (base instanceof IR.VirtualInteger) {
+                throw new Error("shouldn't be possible");
+            }
+            return this.callWithCoercion(atom.span, base, args);
         } else if (atom instanceof AST.Binary) {
             if (atom.kind === AST.BinOp.Arrow) {
                 this.error(atom.span, "invalid expression");
@@ -452,17 +504,20 @@ export default class Checker {
                 return new IR.Unreachable(atom.span);
             }
             if (atom.kind === AST.BinOp.Id) {
-                return this.checkExpr(atom.right, dep, ty);
+                return this.checkExprInner(atom.right, dep, ty);
             }
             const name = AST.binOpToName.get(atom.kind);
             if (name === undefined) {
                 throw new Error("unclassified op");
             }
-            const args = [this.checkExpr(atom.left, dep), this.checkExpr(atom.right, dep)];
+            const args = [
+                this.checkExprInner(atom.left, dep),
+                this.checkExprInner(atom.right, dep)
+            ];
             const params = args.map(v => v.ty);
             const res = dep.scope.findImplementation(
                 name,
-                new IR.Exponential(atom.span, false, params, ty),
+                new IR.VirtualExponential(atom.span, false, params, ty),
                 v => this.resolve(v)
             );
             if (res instanceof IR.Unreachable) {
@@ -473,7 +528,7 @@ export default class Checker {
                 this.error(atom.span, "no overload found");
                 return new IR.Unreachable(atom.span);
             } else if (res.length == 1) {
-                return new IR.Call(atom.span, res[0], args, ty);
+                return this.callWithCoercion(atom.span, res[0], args);
             } else {
                 this.error(atom.span, "multiple overloads found");
                 return new IR.Unreachable(atom.span);
@@ -486,11 +541,11 @@ export default class Checker {
             if (name === undefined) {
                 throw new Error("unclassified op");
             }
-            const args = [this.checkExpr(atom.right, dep)];
+            const args = [this.checkExprInner(atom.right, dep)];
             const params = args.map(v => v.ty);
             const res = dep.scope.findImplementation(
                 name,
-                new IR.Exponential(atom.span, false, params, ty),
+                new IR.VirtualExponential(atom.span, false, params, ty),
                 v => this.resolve(v)
             );
             if (res instanceof IR.Unreachable) {
@@ -501,7 +556,7 @@ export default class Checker {
                 this.error(atom.span, "no overload found");
                 return new IR.Unreachable(atom.span);
             } else if (res.length == 1) {
-                return new IR.Call(atom.span, res[0], args, ty);
+                return this.callWithCoercion(atom.span, res[0], args);
             } else {
                 this.error(atom.span, "multiple overloads found");
                 return new IR.Unreachable(atom.span);
@@ -552,7 +607,7 @@ export default class Checker {
             }
             if (
                 !(ty instanceof IR.StackTy || ty instanceof IR.HeapTy) ||
-                !virtual.assignableTo(ty)
+                !virtual.ty.assignableTo(ty)
             ) {
                 this.error(atom.span, "type mismatch");
                 return new IR.Unreachable(atom.span);
@@ -790,7 +845,7 @@ class Scope {
 
     public findImplementation(
         name: string,
-        ty: IR.Exponential,
+        ty: IR.VirtualExponential,
         resolve: (v: UnresolvedFunctions) => ResolvedSym
     ): IR.SingleFunction[] | IR.Unreachable | null {
         const sym = this.variables.get(name);

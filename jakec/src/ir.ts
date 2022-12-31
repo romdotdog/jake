@@ -63,6 +63,7 @@ export class Drop {
 }
 
 export type Expression = Unreachable | Fn | Local | Call | Integer | NumberExpr;
+export type VirtualExpression = Expression | VirtualInteger;
 
 export class Unreachable {
     public ty: Never;
@@ -82,26 +83,78 @@ export class Call {
         public args: Expression[],
         public ty: Type
     ) {}
-
-    public static drop(span: Span): Drop {
-        return new Drop(new Unreachable(span));
-    }
 }
 
 export class Integer {
     constructor(public span: Span, public value: bigint, public ty: StackTy | HeapTy) {}
+}
+export class VirtualInteger {
+    constructor(public span: Span, public value: bigint, public ty: NumberTy) {}
+
+    public static fromValue(span: Span, value: bigint): VirtualInteger | null {
+        let ty: NumberTy;
+        if (value >= 0n) {
+            if (value < 2n ** 7n) {
+                ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U7);
+            } else if (value < 2n ** 8n) {
+                ty = new HeapTy(span, AST.HeapTyEnum.U8);
+            } else if (value < 2n ** 15n) {
+                ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U15);
+            } else if (value < 2n ** 16n) {
+                ty = new HeapTy(span, AST.HeapTyEnum.U16);
+            } else if (value < 2n ** 24n) {
+                ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U24);
+            } else if (value < 2n ** 31n) {
+                ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U31);
+            } else if (value < 2n ** 32n) {
+                ty = new StackTy(span, AST.StackTyEnum.U32);
+            } else if (value < 2n ** 53n) {
+                ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U53);
+            } else if (value < 2n ** 63n) {
+                ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U63);
+            } else if (value < 2n ** 64n) {
+                ty = new StackTy(span, AST.StackTyEnum.U64);
+            } else {
+                return null;
+            }
+        } else {
+            if (value >= -(2n ** 7n)) {
+                ty = new HeapTy(span, AST.HeapTyEnum.I8);
+            } else if (value >= -(2n ** 15n)) {
+                ty = new HeapTy(span, AST.HeapTyEnum.I16);
+            } else if (value >= -(2n ** 24n)) {
+                ty = new VirtualIntegerTy(VirtualIntegerTyEnum.I25);
+            } else if (value >= -(2n ** 31n)) {
+                ty = new StackTy(span, AST.StackTyEnum.I32);
+            } else if (value >= -(2n ** 53n)) {
+                ty = new VirtualIntegerTy(VirtualIntegerTyEnum.I54);
+            } else if (value >= -(2n ** 63n)) {
+                ty = new StackTy(span, AST.StackTyEnum.I64);
+            } else {
+                return null;
+            }
+        }
+        return new VirtualInteger(span, value, ty);
+    }
 }
 
 export class NumberExpr {
     constructor(public span: Span, public value: number, public ty: StackTy) {}
 }
 
-export type Type = Exponential | Product | StackTy | HeapTy | Never;
-export class Exponential {
-    constructor(public span: Span, public pure: boolean, public params: Type[], public ret: Type) {}
+export type Type = ExponentialSum | Exponential | Product | StackTy | HeapTy | Never;
+export type VirtualType = Type | VirtualIntegerTy | VirtualExponential;
 
-    public equals(other: Type): boolean {
-        if (other instanceof Exponential) {
+export class VirtualExponential {
+    constructor(
+        public span: Span,
+        public pure: boolean,
+        public params: VirtualType[],
+        public ret: VirtualType
+    ) {}
+
+    public equals(other: VirtualType): boolean {
+        if (other instanceof VirtualExponential) {
             return (
                 this.pure == other.pure &&
                 this.params.length == other.params.length &&
@@ -112,8 +165,8 @@ export class Exponential {
         return false;
     }
 
-    public assignableTo(other: Type): boolean {
-        if (other instanceof Exponential) {
+    public assignableTo(other: VirtualType): boolean {
+        if (other instanceof VirtualExponential) {
             return (
                 this.pure == other.pure &&
                 this.params.length == other.params.length &&
@@ -125,8 +178,8 @@ export class Exponential {
     }
 
     public print(): string {
-        function formatType(ty: Type): string {
-            if (ty instanceof Exponential || ty instanceof ExponentialSum) {
+        function formatType(ty: VirtualType): string {
+            if (ty instanceof VirtualExponential || ty instanceof ExponentialSum) {
                 return `(${ty.print()})`;
             }
             return ty.print();
@@ -143,10 +196,16 @@ export class Exponential {
     }
 }
 
+export class Exponential extends VirtualExponential {
+    constructor(public span: Span, public pure: boolean, public params: Type[], public ret: Type) {
+        super(span, pure, params, ret);
+    }
+}
+
 export class ExponentialSum {
     constructor(public span: Span, public exponentials: Exponential[]) {}
 
-    public equals(other: Type): boolean {
+    public equals(other: VirtualType): boolean {
         if (other instanceof ExponentialSum) {
             return (
                 this.exponentials.length == other.exponentials.length &&
@@ -156,7 +215,7 @@ export class ExponentialSum {
         return false;
     }
 
-    public assignableTo(other: Type): boolean {
+    public assignableTo(other: VirtualType): boolean {
         if (other instanceof ExponentialSum) {
             return (
                 this.exponentials.length == other.exponentials.length &&
@@ -174,7 +233,7 @@ export class ExponentialSum {
 export class Product {
     constructor(public span: Span, public fields: Type[]) {}
 
-    equals(other: Type): boolean {
+    equals(other: VirtualType): boolean {
         if (other instanceof Product) {
             return (
                 this.fields.length == other.fields.length &&
@@ -184,7 +243,7 @@ export class Product {
         return false;
     }
 
-    public assignableTo(other: Type): boolean {
+    public assignableTo(other: VirtualType): boolean {
         if (other instanceof Product) {
             return (
                 this.fields.length == other.fields.length &&
@@ -202,14 +261,14 @@ export class Product {
 export class StackTy {
     constructor(public span: Span, public value: AST.StackTyEnum) {}
 
-    public equals(other: Type) {
+    public equals(other: VirtualType) {
         if (other instanceof StackTy) {
             return this.value == other.value;
         }
         return false;
     }
 
-    public assignableTo(other: Type): boolean {
+    public assignableTo(other: VirtualType): boolean {
         return this.equals(other);
     }
 
@@ -234,14 +293,14 @@ export class StackTy {
 export class HeapTy {
     constructor(public span: Span, public value: AST.HeapTyEnum) {}
 
-    public equals(other: Type) {
+    public equals(other: VirtualType) {
         if (other instanceof HeapTy) {
             return this.value == other.value;
         }
         return false;
     }
 
-    public assignableTo(other: Type): boolean {
+    public assignableTo(other: VirtualType): boolean {
         return this.equals(other);
     }
 
@@ -259,97 +318,54 @@ export class HeapTy {
     }
 }
 
-type NumberTy = VirtualTy | StackTy | HeapTy;
-export class VirtualInteger {
-    constructor(public span: Span, public value: bigint, public ty: NumberTy) {}
-
-    public static fromValue(span: Span, value: bigint): VirtualInteger | null {
-        let ty: NumberTy;
-        if (value >= 0n) {
-            if (value < 2n ** 7n) {
-                ty = new VirtualTy(VirtualTyEnum.U7);
-            } else if (value < 2n ** 8n) {
-                ty = new HeapTy(span, AST.HeapTyEnum.U8);
-            } else if (value < 2n ** 15n) {
-                ty = new VirtualTy(VirtualTyEnum.U15);
-            } else if (value < 2n ** 16n) {
-                ty = new HeapTy(span, AST.HeapTyEnum.U16);
-            } else if (value < 2n ** 24n) {
-                ty = new VirtualTy(VirtualTyEnum.U24);
-            } else if (value < 2n ** 31n) {
-                ty = new VirtualTy(VirtualTyEnum.U31);
-            } else if (value < 2n ** 32n) {
-                ty = new StackTy(span, AST.StackTyEnum.U32);
-            } else if (value < 2n ** 53n) {
-                ty = new VirtualTy(VirtualTyEnum.U53);
-            } else if (value < 2n ** 63n) {
-                ty = new VirtualTy(VirtualTyEnum.U63);
-            } else if (value < 2n ** 64n) {
-                ty = new StackTy(span, AST.StackTyEnum.U64);
-            } else {
-                return null;
-            }
-        } else {
-            if (value >= -(2n ** 7n)) {
-                ty = new HeapTy(span, AST.HeapTyEnum.I8);
-            } else if (value >= -(2n ** 15n)) {
-                ty = new HeapTy(span, AST.HeapTyEnum.I16);
-            } else if (value >= -(2n ** 24n)) {
-                ty = new VirtualTy(VirtualTyEnum.I25);
-            } else if (value >= -(2n ** 31n)) {
-                ty = new StackTy(span, AST.StackTyEnum.I32);
-            } else if (value >= -(2n ** 53n)) {
-                ty = new VirtualTy(VirtualTyEnum.I54);
-            } else if (value >= -(2n ** 63n)) {
-                ty = new StackTy(span, AST.StackTyEnum.I64);
-            } else {
-                return null;
-            }
-        }
-        return new VirtualInteger(span, value, ty);
-    }
-
-    public assignableTo(other: NumberTy) {
-        const otherMask = other.value >>> 18;
-        const thisId = this.ty.value & idMask; // javascript does not offer ctz
-        return (otherMask & thisId) !== 0;
-    }
-}
-
+type NumberTy = VirtualIntegerTy | StackTy | HeapTy;
 const idMask = (1 << 19) - 1;
-export class VirtualTy {
-    constructor(public value: VirtualTyEnum) {}
+export class VirtualIntegerTy {
+    constructor(public value: VirtualIntegerTyEnum) {}
 
-    public equals(other: Type): boolean {
-        if (other instanceof VirtualTy) {
+    public equals(other: VirtualType): boolean {
+        if (other instanceof VirtualIntegerTy) {
             return this.value == other.value;
+        }
+        return false;
+    }
+
+    public assignableTo(other: VirtualType): other is NumberTy {
+        if (
+            other instanceof VirtualIntegerTy ||
+            other instanceof StackTy ||
+            other instanceof HeapTy
+        ) {
+            const otherMask = other.value >>> 18;
+            const thisId = this.value & idMask; // javascript does not offer ctz
+            return (otherMask & thisId) !== 0;
         }
         return false;
     }
 
     public print(): string {
         switch (this.value) {
-            case VirtualTyEnum.U7:
+            case VirtualIntegerTyEnum.U7:
                 return "u7";
-            case VirtualTyEnum.U15:
+            case VirtualIntegerTyEnum.U15:
                 return "u15";
-            case VirtualTyEnum.U24:
+            case VirtualIntegerTyEnum.U24:
                 return "u24";
-            case VirtualTyEnum.I25:
+            case VirtualIntegerTyEnum.I25:
                 return "i25";
-            case VirtualTyEnum.U31:
+            case VirtualIntegerTyEnum.U31:
                 return "u31";
-            case VirtualTyEnum.U53:
+            case VirtualIntegerTyEnum.U53:
                 return "u53";
-            case VirtualTyEnum.I54:
+            case VirtualIntegerTyEnum.I54:
                 return "i54";
-            case VirtualTyEnum.U63:
+            case VirtualIntegerTyEnum.U63:
                 return "u63";
         }
     }
 }
 
-export enum VirtualTyEnum {
+export enum VirtualIntegerTyEnum {
     U7 = 0b100000000000000000000000000000000001,
     U15 = 0b101100000000000000000000000000001000,
     U24 = 0b101101100000000000000000000001000000,
@@ -362,14 +378,14 @@ export enum VirtualTyEnum {
 export class Never {
     constructor(public span: Span) {}
 
-    public equals(other: Type) {
+    public equals(other: VirtualType) {
         if (other instanceof Never) {
             return true;
         }
         return false;
     }
 
-    public assignableTo(other: Type): boolean {
+    public assignableTo(): boolean {
         return true;
     }
 
