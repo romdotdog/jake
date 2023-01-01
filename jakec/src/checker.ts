@@ -416,7 +416,12 @@ export default class Checker {
                 );
                 return new IR.Unreachable(atom.span);
             } else if (virtualExpr.ty.assignableTo(ty)) {
-                return new IR.Integer(virtualExpr.span, virtualExpr.value, ty);
+                if (ty instanceof IR.Product) {
+                    // void, see note in VirtualIntegerTy.assignableTo
+                    return IR.ProductCtr.void(virtualExpr.span, ty.span);
+                } else {
+                    return new IR.Integer(virtualExpr.span, virtualExpr.value, ty);
+                }
             } else {
                 this.error(atom.span, "type mismatch (expression doesn't match context)");
                 return new IR.Unreachable(atom.span);
@@ -438,7 +443,12 @@ export default class Checker {
                 if (arg instanceof IR.VirtualInteger) {
                     const destTy = params[i];
                     if (arg.ty.assignableTo(destTy)) {
-                        coercedArgs[i] = new IR.Integer(arg.span, arg.value, destTy);
+                        if (destTy instanceof IR.Product) {
+                            // void, see note in VirtualIntegerTy.assignableTo
+                            coercedArgs[i] = IR.ProductCtr.void(arg.span, destTy.span);
+                        } else {
+                            coercedArgs[i] = new IR.Integer(arg.span, arg.value, destTy);
+                        }
                     } else {
                         coercedArgs[i] = new IR.Unreachable(arg.span);
                     }
@@ -579,7 +589,7 @@ export default class Checker {
                     this.error(atom.span, "identifier is not callable");
                     return new IR.Unreachable(atom.span);
                 } else if (res.length == 0) {
-                    this.error(atom.span, "no implementation found");
+                    this.error(atom.span, "no implementation found (" + ty.print() + ")");
                     return new IR.Unreachable(atom.span);
                 } else if (res.length == 1) {
                     return res[0];
@@ -596,8 +606,8 @@ export default class Checker {
                     return new IR.Unreachable(atom.span);
                 } else if (res instanceof IR.Local) {
                     if (ty !== undefined) {
-                        if (res.ty.assignableTo(ty)) {
-                            return res;
+                        if (IR.Product.isVoid(ty)) {
+                            return IR.ProductCtr.void(atom.span, ty.span);
                         }
                         this.error(atom.span, "type mismatch (local doesn't match with context)");
                         return new IR.Unreachable(atom.span);

@@ -28,6 +28,8 @@ connection.onInitialize(h => {
     };
 });
 
+// TODO: figure out a better way to clear diagnostics on files with none
+let lastFiles: [string, TextDocument][] = [];
 function validate(activeDocument: TextDocument): void {
     /*console.log(
         Diagnostic.create(
@@ -67,9 +69,20 @@ function validate(activeDocument: TextDocument): void {
                 }
             });
             child.on("close", () => {
+                for (const [path, document] of lastFiles) {
+                    if (!allDiagnostics.has(path)) {
+                        connection.sendDiagnostics({
+                            uri: document.uri,
+                            version: document.version,
+                            diagnostics: []
+                        });
+                    }
+                }
+                lastFiles = [];
                 for (const [file, [document, diagnostics]] of allDiagnostics.entries()) {
                     console.log(file);
                     if (document !== undefined) {
+                        lastFiles.push([file, document]);
                         connection.sendDiagnostics({
                             uri: document.uri,
                             version: document.version,

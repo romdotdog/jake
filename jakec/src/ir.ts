@@ -62,7 +62,7 @@ export class Drop {
     constructor(public expr: Expression) {}
 }
 
-export type Expression = Unreachable | Fn | Local | Call | Integer | NumberExpr;
+export type Expression = Unreachable | Fn | Local | Call | Integer | NumberExpr | ProductCtr;
 export type VirtualExpression = Expression | VirtualInteger;
 
 export class Unreachable {
@@ -85,9 +85,18 @@ export class Call {
     ) {}
 }
 
+export class ProductCtr {
+    constructor(public span: Span, public values: Expression[], public ty: Product) {}
+
+    public static void(exprSpan: Span, tySpan: Span) {
+        return new ProductCtr(exprSpan, [], Product.void(tySpan));
+    }
+}
+
 export class Integer {
     constructor(public span: Span, public value: bigint, public ty: StackTy | HeapTy) {}
 }
+
 export class VirtualInteger {
     constructor(public span: Span, public value: bigint, public ty: NumberTy) {}
 
@@ -166,6 +175,9 @@ export class VirtualExponential {
     }
 
     public assignableTo(other: VirtualType): boolean {
+        if (Product.isVoid(other)) {
+            return true;
+        }
         if (other instanceof VirtualExponential) {
             return (
                 this.pure == other.pure &&
@@ -216,6 +228,9 @@ export class ExponentialSum {
     }
 
     public assignableTo(other: VirtualType): boolean {
+        if (Product.isVoid(other)) {
+            return true;
+        }
         if (other instanceof ExponentialSum) {
             return (
                 this.exponentials.length == other.exponentials.length &&
@@ -230,11 +245,20 @@ export class ExponentialSum {
     }
 }
 
+export type Void = Product & { fields: [] };
 export class Product {
     constructor(public span: Span, public fields: Type[]) {}
 
-    public static void(span: Span) {
-        return new Product(span, []);
+    public static void(span: Span): Void {
+        return <Void>new Product(span, []);
+    }
+
+    public static isVoid(ty: VirtualType): ty is Void {
+        return ty instanceof Product && ty.isVoid();
+    }
+
+    public isVoid(): this is Void {
+        return this.fields.length === 0;
     }
 
     equals(other: VirtualType): boolean {
@@ -248,6 +272,9 @@ export class Product {
     }
 
     public assignableTo(other: VirtualType): boolean {
+        if (Product.isVoid(other)) {
+            return true;
+        }
         if (other instanceof Product) {
             return (
                 this.fields.length == other.fields.length &&
@@ -273,6 +300,9 @@ export class StackTy {
     }
 
     public assignableTo(other: VirtualType): boolean {
+        if (Product.isVoid(other)) {
+            return true;
+        }
         return this.equals(other);
     }
 
@@ -305,6 +335,9 @@ export class HeapTy {
     }
 
     public assignableTo(other: VirtualType): boolean {
+        if (Product.isVoid(other)) {
+            return true;
+        }
         return this.equals(other);
     }
 
@@ -333,7 +366,11 @@ export class VirtualIntegerTy {
         return false;
     }
 
-    public assignableTo(other: VirtualType): other is NumberTy {
+    // putting void in place of product leads to soundness issues..?
+    public assignableTo(other: VirtualType): other is NumberTy | Product {
+        if (Product.isVoid(other)) {
+            return true;
+        }
         if (
             other instanceof VirtualIntegerTy ||
             other instanceof StackTy ||
