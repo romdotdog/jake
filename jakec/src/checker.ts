@@ -28,6 +28,7 @@ export default class Checker {
 
     private error(span: Span, message: string) {
         this.system.error({
+            path: this.deps[span.idx].path,
             span,
             message,
             severity: DiagnosticSeverity.Error

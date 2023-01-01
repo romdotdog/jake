@@ -15,6 +15,7 @@ export default class Parser {
     private error(span: Span, message: string, important = false) {
         if (!(important || this.quiet)) {
             this.system.error({
+                path: this.path,
                 span,
                 message,
                 severity: DiagnosticSeverity.Error
@@ -59,7 +60,12 @@ export default class Parser {
         return result;
     }
 
-    constructor(private system: System, private lexer: Lexer, private idx: number) {
+    constructor(
+        private system: System,
+        private lexer: Lexer,
+        private path: string,
+        private idx: number
+    ) {
         this.lookahead = this.lexer.next();
     }
 

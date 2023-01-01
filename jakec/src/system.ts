@@ -23,6 +23,7 @@ export default abstract class System {
 }
 
 export interface Diagnostic {
+    path: string;
     span: Span;
     message: string;
     severity?: DiagnosticSeverity;

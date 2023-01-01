@@ -13,13 +13,13 @@ class Toolchain {
     private idxToCompDep: Map<number, CompDep> = new Map();
     private program: Program = new Program();
 
-    private traverse(path: string): Dep | undefined {
-        const src = this.system.load(path);
+    private traverse(path: string, maybeSrc?: string): Dep | undefined {
+        const src = maybeSrc ?? this.system.load(path);
         if (src === undefined) {
             return undefined;
         }
         const idx = this.deps.length;
-        const ast = new Parser(this.system, new Lexer(src), idx).parse();
+        const ast = new Parser(this.system, new Lexer(src), path, idx).parse();
         const dep = new Dep(idx, path, src, ast);
         this.deps.push(dep);
         this.pathToDep.set(path, dep);
@@ -67,8 +67,8 @@ class Toolchain {
 
     constructor(private system: System) {}
 
-    compile(root: string) {
-        this.traverse(this.system.resolve(root));
+    compile(root: string, maybeSrc?: string) {
+        this.traverse(this.system.resolve(root), maybeSrc);
     }
 }
 
@@ -82,6 +82,13 @@ export class Dep {
 }
 
 if (process.argv.includes("--child")) {
-    const toolchain = new Toolchain(new ChildSystem());
-    toolchain.compile(process.argv[2]);
+    const system = new ChildSystem();
+    const toolchain = new Toolchain(system);
+    const path = "src/index.jk";
+    const src = system.load(path);
+    if (src !== undefined) {
+        toolchain.compile(path, src);
+    } else {
+        console.log("no entrypoint");
+    }
 }
