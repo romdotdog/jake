@@ -3,5 +3,5 @@ import "fn.jk" with { fn };
 // fn: impls = [u32 -> u32]
 
 export function main(): [] {
-    fn(1);
+    fn(2147483648);
 }

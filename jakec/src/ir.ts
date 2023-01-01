@@ -233,6 +233,10 @@ export class ExponentialSum {
 export class Product {
     constructor(public span: Span, public fields: Type[]) {}
 
+    public static void(span: Span) {
+        return new Product(span, []);
+    }
+
     equals(other: VirtualType): boolean {
         if (other instanceof Product) {
             return (
@@ -319,7 +323,6 @@ export class HeapTy {
 }
 
 type NumberTy = VirtualIntegerTy | StackTy | HeapTy;
-const idMask = (1 << 19) - 1;
 export class VirtualIntegerTy {
     constructor(public value: VirtualIntegerTyEnum) {}
 
@@ -336,8 +339,8 @@ export class VirtualIntegerTy {
             other instanceof StackTy ||
             other instanceof HeapTy
         ) {
-            const otherMask = other.value >>> 18;
-            const thisId = this.value & idMask; // javascript does not offer ctz
+            const otherMask = other.value;
+            const thisId = 1 << (31 - Math.clz32(this.value));
             return (otherMask & thisId) !== 0;
         }
         return false;
@@ -367,14 +370,14 @@ export class VirtualIntegerTy {
 
 export enum VirtualIntegerTyEnum {
     // prettier-ignore
-    U7  = 0b100000000000000000000000000000000001,
-    U15 = 0b101100000000000000000000000000001000,
-    U24 = 0b101101100000000000000000000001000000,
-    I25 = 0b111111110000000000000000000010000000,
-    U31 = 0b101101100100000000000000001000000000,
-    U53 = 0b101101100101100000000001000000000000,
-    I54 = 0b111111110111010000000010000000000000,
-    U63 = 0b101101100101000100001000000000000000
+    U7  = 0b000000000000000001,
+    U15 = 0b000000000000001101,
+    U24 = 0b000000000001101101,
+    I25 = 0b000000000011111111,
+    U31 = 0b000000001001101101,
+    U53 = 0b000001101001101101,
+    I54 = 0b000010111011111111,
+    U63 = 0b001000101001101101
 }
 export class Never {
     constructor(public span: Span) {}

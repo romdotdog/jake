@@ -418,7 +418,7 @@ export default class Checker {
             } else if (virtualExpr.ty.assignableTo(ty)) {
                 return new IR.Integer(virtualExpr.span, virtualExpr.value, ty);
             } else {
-                this.error(atom.span, "type mismatch");
+                this.error(atom.span, "type mismatch (expression doesn't match context)");
                 return new IR.Unreachable(atom.span);
             }
         }
@@ -468,11 +468,6 @@ export default class Checker {
             return this.checkExprInner(atom.expr, dep, ty);
         }
 
-        if (ty === undefined) {
-            this.error(atom.span, "required type annotation");
-            return new IR.Unreachable(atom.span);
-        }
-
         if (atom instanceof AST.Call) {
             if (atom.base === null) {
                 return new IR.Unreachable(atom.span);
@@ -490,7 +485,12 @@ export default class Checker {
             const base = this.checkExprInner(
                 atom.base,
                 dep,
-                new IR.VirtualExponential(atom.span, false, params, ty)
+                new IR.VirtualExponential(
+                    atom.span,
+                    false,
+                    params,
+                    ty ?? IR.Product.void(atom.span)
+                )
             );
             if (base instanceof IR.VirtualInteger) {
                 throw new Error("shouldn't be possible");
@@ -516,17 +516,19 @@ export default class Checker {
                 this.checkExprInner(atom.right, dep)
             ];
             const params = args.map(v => v.ty);
-            const res = dep.scope.findImplementation(
-                name,
-                new IR.VirtualExponential(atom.span, false, params, ty),
-                v => this.resolve(v)
+            const virt = new IR.VirtualExponential(
+                atom.span,
+                false,
+                params,
+                ty ?? IR.Product.void(atom.span)
             );
+            const res = dep.scope.findImplementation(name, virt, v => this.resolve(v));
             if (res instanceof IR.Unreachable) {
                 return new IR.Unreachable(atom.span);
             } else if (res === null) {
                 throw new Error("operator name is local");
             } else if (res.length == 0) {
-                this.error(atom.span, "no overload found");
+                this.error(atom.span, "no overload found (" + virt.print() + ")");
                 return new IR.Unreachable(atom.span);
             } else if (res.length == 1) {
                 return this.callWithCoercion(atom.span, res[0], args);
@@ -546,7 +548,12 @@ export default class Checker {
             const params = args.map(v => v.ty);
             const res = dep.scope.findImplementation(
                 name,
-                new IR.VirtualExponential(atom.span, false, params, ty),
+                new IR.VirtualExponential(
+                    atom.span,
+                    false,
+                    params,
+                    ty ?? IR.Product.void(atom.span)
+                ),
                 v => this.resolve(v)
             );
             if (res instanceof IR.Unreachable) {
@@ -564,7 +571,7 @@ export default class Checker {
             }
         } else if (atom instanceof AST.Ident) {
             const value = atom.span.link(dep.file.src);
-            if (ty instanceof IR.Exponential) {
+            if (ty instanceof IR.VirtualExponential) {
                 const res = dep.scope.findImplementation(value, ty, v => this.resolve(v));
                 if (res instanceof IR.Unreachable) {
                     return new IR.Unreachable(atom.span);
@@ -588,13 +595,17 @@ export default class Checker {
                 } else if (res instanceof IR.Unreachable) {
                     return new IR.Unreachable(atom.span);
                 } else if (res instanceof IR.Local) {
-                    if (res.ty.assignableTo(ty)) {
+                    if (ty !== undefined) {
+                        if (res.ty.assignableTo(ty)) {
+                            return res;
+                        }
+                        this.error(atom.span, "type mismatch (local doesn't match with context)");
+                        return new IR.Unreachable(atom.span);
+                    } else {
                         return res;
                     }
-                    this.error(atom.span, "type mismatch");
-                    return new IR.Unreachable(atom.span);
                 } else if (res instanceof UnresolvedFunctions) {
-                    this.error(atom.span, "type mismatch");
+                    this.error(atom.span, "type mismatch (functions in local context)");
                     return new IR.Unreachable(atom.span);
                 } else {
                     unreachable(res);
@@ -606,14 +617,18 @@ export default class Checker {
                 this.error(atom.span, "literal too large");
                 return new IR.Unreachable(atom.span);
             }
-            if (
-                !(ty instanceof IR.StackTy || ty instanceof IR.HeapTy) ||
-                !virtual.ty.assignableTo(ty)
-            ) {
-                this.error(atom.span, "type mismatch");
-                return new IR.Unreachable(atom.span);
+            if (ty !== undefined) {
+                if (
+                    !(ty instanceof IR.StackTy || ty instanceof IR.HeapTy) ||
+                    !virtual.ty.assignableTo(ty)
+                ) {
+                    this.error(atom.span, "type mismatch (integer literal cannot fit context)");
+                    return new IR.Unreachable(atom.span);
+                }
+                return new IR.Integer(atom.span, atom.value, ty);
+            } else {
+                return virtual;
             }
-            return new IR.Integer(atom.span, atom.value, ty);
         } else if (atom instanceof AST.NumberLiteral) {
             if (
                 !(ty instanceof IR.StackTy) ||

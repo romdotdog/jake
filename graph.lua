@@ -43,10 +43,9 @@ end
 
 print(#types)
 for i, v in pairs(types) do
-    local id = string.rep("0", #types - i) .. "1" .. string.rep("0", i - 1)
     local from = ""
-    for k, o in pairs(types) do
-        from = from .. (coerce(o, v) and "1" or "0")
+    for j = #types, 1, -1 do
+        from = from .. (coerce(types[j], v) and "1" or "0")
     end
-    print(typeToString(v), "0b" .. from .. id)
+    print(typeToString(v), "0b" .. from)
 end
