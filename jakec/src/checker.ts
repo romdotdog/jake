@@ -262,9 +262,25 @@ export default class Checker {
             if (pattern === null) {
                 return new IR.Unreachable(param.span);
             }
-            tyParams.push(pattern.ty);
+
+            const ty = pattern.ty;
+            if (
+                ty instanceof IR.ExponentialSum ||
+                ty instanceof IR.Exponential ||
+                ty instanceof IR.Product
+            ) {
+                this.error(pattern.ty.span, "params cannot have this type");
+                return new IR.Unreachable(param.span);
+            }
+
+            if (ty instanceof IR.HeapTy) {
+                this.error(pattern.ty.span, "heap types cannot exist on the stack");
+                return new IR.Unreachable(param.span);
+            }
+
+            tyParams.push(ty);
             const name = pattern.untyped.ident.span.link(dep.file.src);
-            params.push(new IR.Local(params.length, name, pattern.untyped.mut, pattern.ty));
+            params.push(new IR.Local(params.length, name, pattern.untyped.mut, ty));
         }
         if (tyParams.length == 0) {
             tyParams.push(new IR.Product(item.sig.span, []));
@@ -347,16 +363,27 @@ export default class Checker {
             }
 
             const name = pattern.untyped.ident.span.link(dep.file.src);
-            if (statement.expr === null) {
+            const ty = pattern.ty;
+            const isUnsupported =
+                ty instanceof IR.ExponentialSum ||
+                ty instanceof IR.Exponential ||
+                ty instanceof IR.Product;
+            const isHeapTy = ty instanceof IR.HeapTy;
+
+            if (statement.expr === null || isUnsupported || isHeapTy) {
+                if (isUnsupported) {
+                    this.error(pattern.ty.span, "locals cannot have this type");
+                } else if (isHeapTy) {
+                    this.error(pattern.ty.span, "heap types cannot exist on the stack");
+                }
                 const local = fn.addLocal(name, pattern.untyped.mut, new IR.Never(statement.span));
                 scope.set(name, local);
+                fn.body.push(new IR.LocalSet(local, new IR.Unreachable(statement.span)));
                 return false;
             }
 
-            // TODO: check expr
-            const local = fn.addLocal(name, pattern.untyped.mut, pattern.ty);
+            const local = fn.addLocal(name, pattern.untyped.mut, ty);
             scope.set(name, local);
-
             fn.body.push(new IR.LocalSet(local, this.checkExpr(statement.expr, dep, pattern.ty)));
             return false;
         } else if (statement instanceof AST.Assign) {
@@ -453,13 +480,16 @@ export default class Checker {
                 this.error(atom.span, "type mismatch (expression doesn't match context)");
                 return new IR.Unreachable(atom.span);
             }
+        } else if (virtualExpr instanceof IR.SingleFunction) {
+            this.error(atom.span, "functions do not have a first-class representation");
+            return new IR.Unreachable(atom.span);
         }
         return virtualExpr;
     }
 
     private callWithCoercion(
         span: Span,
-        fn: IR.Expression,
+        fn: IR.SingleFunction,
         args: IR.VirtualExpression[]
     ): IR.Call | IR.Unreachable {
         const coercedArgs = new Array(args.length);
@@ -532,7 +562,12 @@ export default class Checker {
             if (base instanceof IR.VirtualInteger) {
                 throw new Error("shouldn't be possible");
             }
-            return this.callWithCoercion(atom.span, base, args);
+            if (base instanceof IR.SingleFunction) {
+                return this.callWithCoercion(atom.span, base, args);
+            } else if (!(base instanceof IR.Unreachable)) {
+                this.error(base.span, "this expression is not callable");
+            }
+            return new IR.Unreachable(atom.span);
         } else if (atom instanceof AST.Binary) {
             if (atom.kind === AST.BinOp.Arrow) {
                 this.error(atom.span, "invalid expression");
@@ -639,7 +674,7 @@ export default class Checker {
                         this.error(atom.span, "type mismatch (local doesn't match with context)");
                         return new IR.Unreachable(atom.span);
                     } else {
-                        return res;
+                        return new IR.LocalRef(atom.span, res, res.ty);
                     }
                 } else if (res instanceof UnresolvedFunctions) {
                     this.error(atom.span, "type mismatch (functions in local context)");

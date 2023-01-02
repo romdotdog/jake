@@ -27,7 +27,7 @@ export class SingleFunction {
         public body: Statement[]
     ) {}
 
-    public addLocal(name: string, mut: boolean, ty: Type) {
+    public addLocal(name: string, mut: boolean, ty: StackTy | Never) {
         const local = new Local(this.locals.length, name, mut, ty);
         this.locals.push(local);
         return local;
@@ -44,7 +44,12 @@ export class FunctionSum {
 
 export class Local {
     public internalName: string;
-    constructor(public idx: number, public name: string, public mut: boolean, public ty: Type) {
+    constructor(
+        public idx: number,
+        public name: string,
+        public mut: boolean,
+        public ty: StackTy | Never
+    ) {
         this.internalName = labelize(`${name}_${ty.print()}`);
     }
 }
@@ -63,8 +68,8 @@ export class Drop {
     constructor(public expr: Expression) {}
 }
 
-export type Expression = Unreachable | Fn | Local | Call | Integer | NumberExpr | ProductCtr;
-export type VirtualExpression = Expression | VirtualInteger;
+export type Expression = Unreachable | LocalRef | Call | Integer | NumberExpr | ProductCtr;
+export type VirtualExpression = Expression | VirtualInteger | SingleFunction;
 
 export class Unreachable {
     public ty: Never;
@@ -77,10 +82,14 @@ export class Unreachable {
     }
 }
 
+export class LocalRef {
+    constructor(public span: Span, public local: Local, public ty: Type) {}
+}
+
 export class Call {
     constructor(
         public span: Span,
-        public fn: Expression,
+        public fn: SingleFunction,
         public args: Expression[],
         public ty: Type
     ) {}
@@ -262,7 +271,7 @@ export class Product {
         return this.fields.length === 0;
     }
 
-    equals(other: VirtualType): boolean {
+    public equals(other: VirtualType): boolean {
         if (other instanceof Product) {
             return (
                 this.fields.length == other.fields.length &&
@@ -276,8 +285,8 @@ export class Product {
         if (other instanceof Product) {
             return (
                 other.fields.length === 0 ||
-                this.fields.length == other.fields.length &&
-                this.fields.every((v, i) => v.assignableTo(other.fields[i]))
+                (this.fields.length == other.fields.length &&
+                    this.fields.every((v, i) => v.assignableTo(other.fields[i])))
             );
         }
         return false;
