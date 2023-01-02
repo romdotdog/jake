@@ -10,6 +10,10 @@ export default class Lexer {
         this.srcLength = src.length;
     }
 
+    public getSource() {
+        return this.src;
+    }
+
     private skip() {
         return ++this.p;
     }

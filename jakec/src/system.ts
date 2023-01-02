@@ -19,7 +19,7 @@ export default abstract class System {
         return relative(process.cwd(), path);
     }
 
-    public abstract error(x: Diagnostic): void;
+    public abstract error(x: Diagnostic, src: string): void;
 }
 
 export interface Diagnostic {
@@ -58,6 +58,12 @@ export enum DiagnosticSeverity {
 export interface Position {
     line: number;
     character: number;
+}
+
+export class ConsoleSystem extends System {
+    public error(x: Diagnostic, src: string) {
+        console.log(`"${x.span.link(src)}": ${x.message}`);
+    }
 }
 
 export class ChildSystem extends System {

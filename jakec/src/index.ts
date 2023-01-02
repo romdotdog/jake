@@ -4,7 +4,7 @@ import { Program } from "./ir.js";
 import Checker, { CompDep } from "./checker.js";
 import Lexer from "./lexer.js";
 import Parser from "./parser.js";
-import System, { ChildSystem } from "./system.js";
+import System, { ChildSystem, ConsoleSystem } from "./system.js";
 
 class Toolchain {
     private deps: Dep[] = [];
@@ -81,14 +81,12 @@ export class Dep {
     }
 }
 
-if (process.argv.includes("--child")) {
-    const system = new ChildSystem();
-    const toolchain = new Toolchain(system);
-    const path = "src/index.jk";
-    const src = system.load(path);
-    if (src !== undefined) {
-        toolchain.compile(path, src);
-    } else {
-        console.log("no entrypoint");
-    }
+const system = process.argv.includes("--child") ? new ChildSystem() : new ConsoleSystem();
+const toolchain = new Toolchain(system);
+const path = "src/index.jk";
+const src = system.load(path);
+if (src !== undefined) {
+    toolchain.compile(path, src);
+} else {
+    console.log("no entrypoint");
 }

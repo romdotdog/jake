@@ -27,12 +27,16 @@ export default class Checker {
     private resolutionSet: Set<UnresolvedSym> = new Set();
 
     private error(span: Span, message: string) {
-        this.system.error({
-            path: this.deps[span.idx].path,
-            span,
-            message,
-            severity: DiagnosticSeverity.Error
-        });
+        const dep = this.deps[span.idx];
+        this.system.error(
+            {
+                path: dep.path,
+                span,
+                message,
+                severity: DiagnosticSeverity.Error
+            },
+            dep.src
+        );
     }
 
     public exportStage(unit: Dep[]) {
@@ -157,7 +161,6 @@ export default class Checker {
         for (const dep of this.unit) {
             dep.scope.push();
             for (const item of dep.exported.values()) {
-                console.log(item);
                 this.resolve(item);
             }
         }

@@ -182,7 +182,7 @@ export class VirtualExponential {
             return (
                 this.pure == other.pure &&
                 this.params.length == other.params.length &&
-                this.ret.assignableTo(other.ret) &&
+                other.ret.assignableTo(this.ret) && // notice
                 this.params.every((v, i) => v.assignableTo(other.params[i]))
             );
         }
@@ -407,7 +407,7 @@ export class VirtualIntegerTy {
 
 export enum VirtualIntegerTyEnum {
     // prettier-ignore
-    U7  = 0b000000000000000001,
+    U7 = 0b000000000000000001,
     U15 = 0b000000000000001101,
     U24 = 0b000000000001101101,
     I25 = 0b000000000011111111,
