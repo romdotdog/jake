@@ -13,14 +13,14 @@ class Toolchain {
     private idxToCompDep: Map<number, CompDep> = new Map();
     private program: Program = new Program();
 
-    private traverse(path: string, maybeSrc?: string): Dep | undefined {
+    private traverse(path: string, topLevel: boolean, maybeSrc?: string): Dep | undefined {
         const src = maybeSrc ?? this.system.load(path);
         if (src === undefined) {
             return undefined;
         }
         const idx = this.deps.length;
         const ast = new Parser(this.system, new Lexer(src), path, idx).parse();
-        const dep = new Dep(idx, path, src, ast);
+        const dep = new Dep(idx, path, src, ast, topLevel);
         this.deps.push(dep);
         this.pathToDep.set(path, dep);
         this.stack.push(dep);
@@ -35,7 +35,7 @@ class Toolchain {
                     dep.llv = Math.min(dep.llv, importDep.idx);
                 }
             } else {
-                const importDep = this.traverse(importPath);
+                const importDep = this.traverse(importPath, false);
                 dep.imports.push(importDep);
                 if (importDep !== undefined) {
                     dep.llv = Math.min(dep.llv, importDep.llv);
@@ -53,13 +53,7 @@ class Toolchain {
             }
 
             const unit = this.stack.splice(i);
-            const checker = new Checker(
-                this.system,
-                this.program,
-                this.idxToCompDep,
-                this.deps,
-                unit
-            );
+            Checker.run(this.system, this.program, this.idxToCompDep, this.deps, unit);
         }
 
         return dep;
@@ -67,8 +61,9 @@ class Toolchain {
 
     constructor(private system: System) {}
 
-    compile(root: string, maybeSrc?: string) {
-        this.traverse(this.system.resolve(root), maybeSrc);
+    public static compile(system: System, root: string, maybeSrc?: string) {
+        const toolchain = new Toolchain(system);
+        toolchain.traverse(system.resolve(root), true, maybeSrc);
     }
 }
 
@@ -76,17 +71,22 @@ export class Dep {
     public imports: Array<Dep | undefined> = [];
     public onStack = true;
     public llv: number;
-    constructor(public idx: number, public path: string, public src: string, public ast: Source) {
+    constructor(
+        public idx: number,
+        public path: string,
+        public src: string,
+        public ast: Source,
+        public topLevel: boolean
+    ) {
         this.llv = idx;
     }
 }
 
 const system = process.argv.includes("--child") ? new ChildSystem() : new ConsoleSystem();
-const toolchain = new Toolchain(system);
 const path = "src/index.jk";
 const src = system.load(path);
 if (src !== undefined) {
-    toolchain.compile(path, src);
+    Toolchain.compile(system, path, src);
 } else {
     console.log("no entrypoint");
 }

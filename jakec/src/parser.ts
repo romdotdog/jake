@@ -1,7 +1,6 @@
 import Lexer, { Span, Token } from "./lexer.js";
 import * as AST from "./ast.js";
 import System, { DiagnosticSeverity } from "./system.js";
-import { Dep } from "./index.js";
 
 export default class Parser {
     private lookahead: Token;

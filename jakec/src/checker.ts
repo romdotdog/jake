@@ -39,7 +39,7 @@ export default class Checker {
         );
     }
 
-    public exportStage(unit: Dep[]) {
+    private exportStage(unit: Dep[]) {
         for (const dep of unit) {
             const scope = new Scope();
             const exported: Map<string, UnresolvedSym> = new Map();
@@ -75,7 +75,7 @@ export default class Checker {
         }
     }
 
-    public importStage() {
+    private importStage() {
         for (const { file, scope: scope } of this.unit) {
             const importIdx = file.imports;
             const imports = file.ast.imports;
@@ -152,16 +152,33 @@ export default class Checker {
         private system: System,
         private program: IR.Program,
         private idxToCompDep: Map<number, CompDep>,
-        public deps: Dep[],
+        public deps: Dep[]
+    ) {}
+
+    public static run(
+        system: System,
+        program: IR.Program,
+        idxToCompDep: Map<number, CompDep>,
+        deps: Dep[],
         unit: Dep[]
     ) {
-        this.exportStage(unit);
-        this.importStage();
+        const checker = new Checker(system, program, idxToCompDep, deps);
+        checker.exportStage(unit);
+        checker.importStage();
 
-        for (const dep of this.unit) {
+        for (const dep of checker.unit) {
             dep.scope.push();
             for (const item of dep.exported.values()) {
-                this.resolve(item);
+                checker.resolve(item);
+            }
+            if (dep.file.topLevel) {
+                const sym = dep.scope.find("main");
+                if (sym !== undefined && sym instanceof UnresolvedFunctions) {
+                    const resolved = checker.resolve(sym);
+                    if (resolved instanceof IR.SingleFunction) {
+                        program.entry = resolved;
+                    }
+                }
             }
         }
     }
@@ -567,7 +584,8 @@ export default class Checker {
             const args = [this.checkExprInner(atom.right, dep)];
             const params = args.map(v => v.ty);
             const res = this.findImplementation(
-                dep.scope, name,
+                dep.scope,
+                name,
                 new IR.VirtualExponential(
                     atom.span,
                     false,
@@ -676,10 +694,10 @@ export default class Checker {
         }
     }
 
-    public findImplementation(
+    private findImplementation(
         scope: Scope,
         name: string,
-        ty: IR.VirtualExponential,
+        ty: IR.VirtualExponential
     ): IR.SingleFunction[] | IR.Unreachable | null {
         const sym = scope.getSameScope(name);
         if (sym !== undefined) {

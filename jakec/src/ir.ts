@@ -3,6 +3,7 @@ import { Span } from "./lexer";
 
 export class Program {
     public contents: Fn[] = [];
+    public entry: SingleFunction | null = null;
 }
 
 export type Fn = HostImport | SingleFunction | FunctionSum;
