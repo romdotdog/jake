@@ -297,10 +297,15 @@ export default class Checker {
         for (const param of fn.params) {
             scope.set(param.name, param);
         }
+        let needsReturn = true;
         for (const statement of body) {
             if (this.resolveStatement(fn, statement, dep)) {
+                needsReturn = false;
                 break;
             }
+        }
+        if (needsReturn && !IR.Product.void(fn.ty.ret.span).assignableTo(fn.ty.ret)) {
+            this.error(fn.ty.ret.span, "function needs a return statement");
         }
         scope.pop();
     }

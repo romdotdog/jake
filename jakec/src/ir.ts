@@ -272,11 +272,9 @@ export class Product {
     }
 
     public assignableTo(other: VirtualType): boolean {
-        if (Product.isVoid(other)) {
-            return true;
-        }
         if (other instanceof Product) {
             return (
+                other.fields.length === 0 ||
                 this.fields.length == other.fields.length &&
                 this.fields.every((v, i) => v.assignableTo(other.fields[i]))
             );
