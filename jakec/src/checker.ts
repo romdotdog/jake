@@ -288,6 +288,8 @@ export default class Checker {
         const internalName = IR.labelize(`${dep.file.path}/${name}_${ty.print()}`);
         const fn = new IR.SingleFunction(internalName, name, ty, params, [], []);
         this.resolveBody(fn, item.body, dep);
+
+        this.declToFunction.set(item, fn);
         return fn;
     }
 
@@ -540,7 +542,7 @@ export default class Checker {
                 params,
                 ty ?? IR.Product.void(atom.span)
             );
-            const res = dep.scope.findImplementation(name, virt, v => this.resolve(v));
+            const res = this.findImplementation(dep.scope, name, virt);
             if (res instanceof IR.Unreachable) {
                 return new IR.Unreachable(atom.span);
             } else if (res === null) {
@@ -564,15 +566,14 @@ export default class Checker {
             }
             const args = [this.checkExprInner(atom.right, dep)];
             const params = args.map(v => v.ty);
-            const res = dep.scope.findImplementation(
-                name,
+            const res = this.findImplementation(
+                dep.scope, name,
                 new IR.VirtualExponential(
                     atom.span,
                     false,
                     params,
                     ty ?? IR.Product.void(atom.span)
-                ),
-                v => this.resolve(v)
+                )
             );
             if (res instanceof IR.Unreachable) {
                 return new IR.Unreachable(atom.span);
@@ -590,7 +591,7 @@ export default class Checker {
         } else if (atom instanceof AST.Ident) {
             const value = atom.span.link(dep.file.src);
             if (ty instanceof IR.VirtualExponential) {
-                const res = dep.scope.findImplementation(value, ty, v => this.resolve(v));
+                const res = this.findImplementation(dep.scope, value, ty);
                 if (res instanceof IR.Unreachable) {
                     return new IR.Unreachable(atom.span);
                 } else if (res === null) {
@@ -673,6 +674,45 @@ export default class Checker {
         } else {
             return unreachable(atom);
         }
+    }
+
+    public findImplementation(
+        scope: Scope,
+        name: string,
+        ty: IR.VirtualExponential,
+    ): IR.SingleFunction[] | IR.Unreachable | null {
+        const sym = scope.getSameScope(name);
+        if (sym !== undefined) {
+            if (sym instanceof UnresolvedFunctions) {
+                const resolvedSym = this.resolve(sym);
+                if (resolvedSym instanceof IR.FunctionSum) {
+                    const impls = [];
+                    for (const fn of resolvedSym.impls) {
+                        if (ty.assignableTo(fn.ty)) {
+                            impls.push(fn);
+                        }
+                    }
+                    if (impls.length > 0) {
+                        return impls;
+                    }
+                } else if (resolvedSym instanceof IR.SingleFunction) {
+                    if (ty.assignableTo(resolvedSym.ty)) {
+                        return [resolvedSym];
+                    }
+                } else if (resolvedSym instanceof IR.Unreachable) {
+                    return resolvedSym;
+                } else {
+                    unreachable(resolvedSym);
+                }
+            } else if (sym instanceof IR.Unreachable) {
+                return sym;
+            } else if (sym instanceof IR.Local) {
+                return null;
+            } else {
+                unreachable(sym);
+            }
+        }
+        return scope.parent ? this.findImplementation(scope.parent, name, ty) : [];
     }
 
     private pattern(atom: AST.Atom): IR.Pattern | null {
@@ -864,7 +904,7 @@ export class CompDep {
 }
 
 class Scope {
-    constructor(private parent?: Scope, private variables: Map<string, Sym> = new Map()) {}
+    constructor(public parent?: Scope, private variables: Map<string, Sym> = new Map()) {}
 
     public find(name: string): Sym | undefined {
         const match = this.variables.get(name);
@@ -875,45 +915,6 @@ class Scope {
             return this.parent.find(name);
         }
         return undefined;
-    }
-
-    public findImplementation(
-        name: string,
-        ty: IR.VirtualExponential,
-        resolve: (v: UnresolvedFunctions) => ResolvedSym
-    ): IR.SingleFunction[] | IR.Unreachable | null {
-        const sym = this.variables.get(name);
-        if (sym !== undefined) {
-            if (sym instanceof UnresolvedFunctions) {
-                const resolvedSym = resolve(sym);
-                if (resolvedSym instanceof IR.FunctionSum) {
-                    const impls = [];
-                    for (const fn of resolvedSym.impls) {
-                        if (ty.assignableTo(fn.ty)) {
-                            impls.push(fn);
-                        }
-                    }
-                    if (impls.length > 0) {
-                        return impls;
-                    }
-                } else if (resolvedSym instanceof IR.SingleFunction) {
-                    if (ty.assignableTo(resolvedSym.ty)) {
-                        return [resolvedSym];
-                    }
-                } else if (resolvedSym instanceof IR.Unreachable) {
-                    return resolvedSym;
-                } else {
-                    unreachable(resolvedSym);
-                }
-            } else if (sym instanceof IR.Unreachable) {
-                return sym;
-            } else if (sym instanceof IR.Local) {
-                return null;
-            } else {
-                unreachable(sym);
-            }
-        }
-        return this.parent ? this.parent.findImplementation(name, ty, resolve) : [];
     }
 
     public getSameScope(name: string) {
