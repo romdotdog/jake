@@ -26,7 +26,7 @@ function identityGuard<T>(x: T): x is T {
 export default class Checker {
     private unit: CompDep[] = [];
     private symToResolvedSym: Map<UnresolvedSym, ResolvedSym> = new Map();
-    private declToFunction: Map<AST.FunctionDeclaration, IR.SingleFunction> = new Map();
+    private declToFunction: Map<AST.FunctionDeclaration, IR.FunctionImpl> = new Map();
     private resolutionStack: UnresolvedSym[] = [];
     private resolutionSet: Set<UnresolvedSym> = new Set();
 
@@ -47,6 +47,8 @@ export default class Checker {
         for (const dep of unit) {
             const scope = new Scope();
             const exported: Map<string, UnresolvedSym> = new Map();
+            const compDep = new CompDep(dep, scope, exported);
+
             for (const item of dep.ast.items) {
                 const name = item.name.link(dep.src);
                 const nativeSym = scope.getSameScope(name);
@@ -57,7 +59,7 @@ export default class Checker {
                         throw new Error("invariant violated");
                     }
                 } else {
-                    scope.set(name, new UnresolvedFunctions([item]));
+                    scope.set(name, new UnresolvedFunctions(compDep, [item], []));
                 }
                 if (item.exported) {
                     const exportedSym = exported.get(name);
@@ -68,19 +70,19 @@ export default class Checker {
                             throw new Error("invariant violated");
                         }
                     } else {
-                        exported.set(name, new UnresolvedFunctions([item]));
+                        exported.set(name, new UnresolvedFunctions(compDep, [item], []));
                     }
                 }
             }
 
-            const compDep = new CompDep(dep, scope, exported);
             this.unit.push(compDep);
             this.idxToCompDep.set(dep.idx, compDep);
         }
     }
 
     private importStage() {
-        for (const { file, scope: scope } of this.unit) {
+        for (const dep of this.unit) {
+            const { file, scope } = dep;
             const importIdx = file.imports;
             const imports = file.ast.imports;
             for (let i = 0; i < importIdx.length; i++) {
@@ -113,7 +115,7 @@ export default class Checker {
                                 this.error(item[1], "cannot use this name");
                             }
                         } else if (sym instanceof UnresolvedFunctions) {
-                            scope.set(newName, new UnresolvedFunctions(sym.items.slice()));
+                            scope.set(newName, new UnresolvedFunctions(dep, sym.items.slice(), []));
                         } else {
                             unreachable(sym);
                         }
@@ -161,14 +163,30 @@ export default class Checker {
                         this.error(hostImport.span, "type of host import must be exponential");
                     }
                 }
-                ty ??= new IR.Never(hostImport.span);
+                if (ty === null) {
+                    scope.set(name, new IR.Unreachable(hostImport.span));
+                    continue;
+                }
                 const resolvedImport = new IR.HostImport(
+                    hostImport.span,
                     IR.labelize(`${file.path}/${name}_${ty.print()}`),
                     moduleName,
                     functionName,
+                    name,
                     ty
                 );
                 this.program.contents.push(resolvedImport);
+                const sym = scope.find(name);
+                if (sym !== undefined) {
+                    if (sym instanceof UnresolvedFunctions) {
+                        sym.hostImports.push(resolvedImport);
+                    } else {
+                        scope.set(name, new IR.Unreachable(hostImport.name));
+                        this.error(hostImport.name, "cannot use this name");
+                    }
+                } else {
+                    scope.set(name, new UnresolvedFunctions(dep, [], [resolvedImport]));
+                }
             }
         }
     }
@@ -200,7 +218,7 @@ export default class Checker {
                 const sym = dep.scope.find("main");
                 if (sym !== undefined && sym instanceof UnresolvedFunctions) {
                     const resolved = checker.resolve(sym);
-                    if (resolved instanceof IR.SingleFunction && resolved.params.length == 0) {
+                    if (resolved instanceof IR.FunctionImpl && resolved.params.length == 0) {
                         resolved.internalName = "_start";
                     }
                 }
@@ -240,7 +258,7 @@ export default class Checker {
             return this.declToFunction.get(fn) ?? this.resolveFunction(fn);
         }
 
-        const fns: IR.SingleFunction[] = [];
+        const fns: IR.Fn[] = [];
         const exponentials: IR.Exponential[] = [];
         for (const fn of sym.items) {
             const newExp = this.declToFunction.get(fn) ?? this.resolveFunction(fn);
@@ -257,16 +275,26 @@ export default class Checker {
             exponentials.push(newExp.ty);
         }
 
-        const nameSpan = sym.items[0].sig.name;
-        const dep = this.deps[nameSpan.idx];
+        for (const imp of sym.hostImports) {
+            for (const exp of exponentials) {
+                if (imp.ty.equals(exp)) {
+                    this.error(imp.span, "conflicting implementations");
+                    return new IR.Unreachable(imp.span);
+                }
+            }
+            fns.push(imp);
+            exponentials.push(imp.ty);
+        }
+
+        const dep = sym.dep;
         return new IR.FunctionSum(
-            sym.items[0].sig.name.link(dep.src),
+            sym.items?.[0]?.sig?.name?.link(dep.file.src) ?? sym.hostImports[0].functionName,
             fns,
             new IR.ExponentialSum(exponentials[0].span, exponentials)
         );
     }
 
-    private resolveFunction(item: AST.FunctionDeclaration): IR.SingleFunction | IR.Unreachable {
+    private resolveFunction(item: AST.FunctionDeclaration): IR.FunctionImpl | IR.Unreachable {
         if (item.sig.ty !== undefined) {
             this.error(item.sig.span, "polymorphism is not yet supported");
             return new IR.Unreachable(item.sig.span);
@@ -358,7 +386,7 @@ export default class Checker {
         }
 
         const internalName = IR.labelize(`${dep.file.path}/${name}_${ty.print()}`);
-        const fn = new IR.SingleFunction(internalName, name, ty, params, [], []);
+        const fn = new IR.FunctionImpl(internalName, name, ty, params, [], []);
         this.resolveBody(fn, item.body, dep);
 
         this.declToFunction.set(item, fn);
@@ -366,7 +394,7 @@ export default class Checker {
         return fn;
     }
 
-    private resolveBody(fn: IR.SingleFunction, body: AST.Statement[], dep: CompDep) {
+    private resolveBody(fn: IR.FunctionImpl, body: AST.Statement[], dep: CompDep) {
         const { file, scope } = dep;
         scope.push();
         for (const param of fn.params) {
@@ -386,11 +414,7 @@ export default class Checker {
         scope.pop();
     }
 
-    private resolveStatement(
-        fn: IR.SingleFunction,
-        statement: AST.Statement,
-        dep: CompDep
-    ): boolean {
+    private resolveStatement(fn: IR.FunctionImpl, statement: AST.Statement, dep: CompDep): boolean {
         const { file, scope } = dep;
         if (statement instanceof AST.Let) {
             if (statement.pattern === null) {
@@ -523,7 +547,7 @@ export default class Checker {
                 this.error(atom.span, "type mismatch (expression doesn't match context)");
                 return new IR.Unreachable(atom.span);
             }
-        } else if (virtualExpr instanceof IR.SingleFunction) {
+        } else if (virtualExpr instanceof IR.FunctionImpl || virtualExpr instanceof IR.HostImport) {
             this.error(atom.span, "functions do not have a first-class representation");
             return new IR.Unreachable(atom.span);
         }
@@ -532,35 +556,31 @@ export default class Checker {
 
     private callWithCoercion(
         span: Span,
-        fn: IR.SingleFunction,
+        fn: IR.Fn,
         args: IR.VirtualExpression[]
     ): IR.Call | IR.Unreachable {
         const coercedArgs = new Array(args.length);
-        if (fn instanceof IR.SingleFunction) {
-            const params = fn.ty.params;
-            for (let i = 0; i < args.length; i++) {
-                const arg = args[i];
-                if (arg instanceof IR.VirtualInteger) {
-                    const destTy = params[i];
-                    if (arg.ty.assignableTo(destTy)) {
-                        if (destTy instanceof IR.Product) {
-                            // void, see note in VirtualIntegerTy.assignableTo
-                            coercedArgs[i] = IR.ProductCtr.void(arg.span, destTy.span);
-                        } else if (IR.isIntegerTy(destTy)) {
-                            coercedArgs[i] = new IR.Integer(arg.span, arg.value, destTy);
-                        } else {
-                            throw new Error();
-                        }
+        for (let i = 0; i < args.length; i++) {
+            const arg = args[i];
+            if (arg instanceof IR.VirtualInteger) {
+                const destTy = fn.ty.params[i];
+                if (arg.ty.assignableTo(destTy)) {
+                    if (destTy instanceof IR.Product) {
+                        // void, see note in VirtualIntegerTy.assignableTo
+                        coercedArgs[i] = IR.ProductCtr.void(arg.span, destTy.span);
+                    } else if (IR.isIntegerTy(destTy)) {
+                        coercedArgs[i] = new IR.Integer(arg.span, arg.value, destTy);
                     } else {
-                        coercedArgs[i] = new IR.Unreachable(arg.span);
+                        throw new Error();
                     }
                 } else {
-                    coercedArgs[i] = arg;
+                    coercedArgs[i] = new IR.Unreachable(arg.span);
                 }
+            } else {
+                coercedArgs[i] = arg;
             }
-            return new IR.Call(span, fn, coercedArgs, params[params.length - 1]);
         }
-        return new IR.Unreachable(span);
+        return new IR.Call(span, fn, coercedArgs, fn.ty.ret);
     }
 
     // resulting expression is guaranteed to be assignable to ty
@@ -602,7 +622,7 @@ export default class Checker {
             if (base instanceof IR.VirtualInteger) {
                 throw new Error("shouldn't be possible");
             }
-            if (base instanceof IR.SingleFunction) {
+            if (base instanceof IR.FunctionImpl || base instanceof IR.HostImport) {
                 return this.callWithCoercion(atom.span, base, args);
             } else if (!(base instanceof IR.Unreachable)) {
                 this.error(base.span, "this expression is not callable");
@@ -762,7 +782,7 @@ export default class Checker {
         scope: Scope,
         name: string,
         ty: IR.VirtualExponential
-    ): IR.SingleFunction[] | IR.Unreachable | null {
+    ): IR.Fn[] | IR.Unreachable | null {
         const sym = scope.getSameScope(name);
         if (sym !== undefined) {
             if (sym instanceof UnresolvedFunctions) {
@@ -777,7 +797,7 @@ export default class Checker {
                     if (impls.length > 0) {
                         return impls;
                     }
-                } else if (resolvedSym instanceof IR.SingleFunction) {
+                } else if (resolvedSym instanceof IR.FunctionImpl) {
                     if (ty.assignableTo(resolvedSym.ty)) {
                         return [resolvedSym];
                     }
@@ -1030,9 +1050,13 @@ class Scope {
 }
 
 type Sym = IR.Local | UnresolvedFunctions | IR.Unreachable;
-type ResolvedSym = IR.FunctionSum | IR.SingleFunction | IR.Unreachable;
+type ResolvedSym = IR.FunctionSum | IR.FunctionImpl | IR.Unreachable;
 type UnresolvedSym = UnresolvedFunctions;
 
 class UnresolvedFunctions {
-    constructor(public items: AST.FunctionDeclaration[]) {}
+    constructor(
+        public dep: CompDep,
+        public items: AST.FunctionDeclaration[],
+        public hostImports: IR.HostImport[]
+    ) {}
 }

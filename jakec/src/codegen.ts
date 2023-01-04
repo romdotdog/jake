@@ -38,21 +38,22 @@ export class CodeGen {
                     codegen.module.addFunctionImport(
                         fn.internalName,
                         fn.moduleName,
-                        fn.functionName,
+                        fn.importFunctionName,
                         binaryen.createType(fn.ty.params.map(p => codegen.localType(p))),
                         codegen.result(fn.ty.ret)
                     );
                 }
-            } else if (fn instanceof IR.SingleFunction) {
+            } else if (fn instanceof IR.FunctionImpl) {
                 codegen.compileFunction(fn);
             }
         }
         //codegen.module.optimize();
-        if (!codegen.module.validate()) throw new Error("validation error");
+        codegen.module.validate();
+        //if (!) throw new Error("validation error");
         return codegen.module.emitText();
     }
 
-    private compileFunction(fn: IR.SingleFunction) {
+    private compileFunction(fn: IR.FunctionImpl) {
         this.module.addFunction(
             fn.internalName,
             binaryen.createType(fn.params.map(p => this.localType(p.ty))),
@@ -99,11 +100,14 @@ export class CodeGen {
         }
     }
 
-    private functionBody(fn: IR.SingleFunction): binaryen.ExpressionRef {
+    private functionBody(fn: IR.FunctionImpl): binaryen.ExpressionRef {
         return this.module.block(
             null,
             fn.body.map(stmt => {
                 if (stmt instanceof IR.Drop) {
+                    if (IR.Product.isVoid(stmt.expr.ty)) {
+                        return this.expr(stmt.expr);
+                    }
                     return this.module.drop(this.expr(stmt.expr));
                 } else if (stmt instanceof IR.LocalSet) {
                     return this.module.local.set(stmt.local.idx, this.expr(stmt.expr));

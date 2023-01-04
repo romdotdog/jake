@@ -1,7 +1,8 @@
 import "fn.jk" with { fn };
+import host "jake/report" as report: u64 -> [];
 
 // fn: impls = [u32 -> u32]
 
 export function main(): [] {
-    fn(4294967296);
+    report(fn(4294967296));
 }

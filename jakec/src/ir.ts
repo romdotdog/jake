@@ -5,18 +5,20 @@ export class Program {
     public contents: Fn[] = [];
 }
 
-export type Fn = HostImport | SingleFunction;
+export type Fn = HostImport | FunctionImpl;
 
 export class HostImport {
     constructor(
+        public span: Span,
         public internalName: string,
         public moduleName: string,
+        public importFunctionName: string,
         public functionName: string,
-        public ty: Exponential<WASMStackType, WASMResultType> | Never
+        public ty: Exponential<WASMStackType, WASMResultType>
     ) {}
 }
 
-export class SingleFunction {
+export class FunctionImpl {
     constructor(
         public internalName: string,
         public functionName: string,
@@ -34,11 +36,7 @@ export class SingleFunction {
 }
 
 export class FunctionSum {
-    constructor(
-        public functionName: string,
-        public impls: SingleFunction[],
-        public ty: ExponentialSum
-    ) {}
+    constructor(public functionName: string, public impls: Fn[], public ty: ExponentialSum) {}
 }
 
 export type WASMStackType = StackTy | Never;
@@ -71,7 +69,7 @@ export class Drop {
 }
 
 export type Expression = Unreachable | LocalRef | Call | Integer | Float | ProductCtr;
-export type VirtualExpression = Expression | VirtualInteger | SingleFunction;
+export type VirtualExpression = Expression | VirtualInteger | Fn;
 
 export class Unreachable {
     public ty: Never;
@@ -89,12 +87,7 @@ export class LocalRef {
 }
 
 export class Call {
-    constructor(
-        public span: Span,
-        public fn: SingleFunction,
-        public args: Expression[],
-        public ty: Type
-    ) {}
+    constructor(public span: Span, public fn: Fn, public args: Expression[], public ty: Type) {}
 }
 
 export class ProductCtr {

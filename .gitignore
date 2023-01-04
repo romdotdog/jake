@@ -2,3 +2,5 @@ dist
 node_modules
 .gitpod.yml
 .vscode/settings.json
+/a.ir
+/a.wat
