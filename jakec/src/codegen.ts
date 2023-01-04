@@ -48,7 +48,7 @@ export class CodeGen {
             }
         }
         //codegen.module.optimize();
-        //if (!codegen.module.validate()) throw new Error("validation error");
+        if (!codegen.module.validate()) throw new Error("validation error");
         return codegen.module.emitText();
     }
 
@@ -138,7 +138,7 @@ export class CodeGen {
                         const value = BigInt.asIntN(64, expr.value);
                         const hi = value >> 32n;
                         const lo = value & ((1n << 33n) - 1n);
-                        return this.module.i64.const(Number(hi), Number(lo));
+                        return this.module.i64.const(Number(lo), Number(hi));
                     }
                 }
             } else if (expr.ty instanceof IR.HeapTy) {

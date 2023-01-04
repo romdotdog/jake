@@ -381,6 +381,7 @@ export default class Checker {
         }
         if (needsReturn && !IR.Product.void(fn.ty.ret.span).assignableTo(fn.ty.ret)) {
             this.error(fn.ty.ret.span, "function needs a return statement");
+            fn.body.push(IR.Unreachable.drop(fn.ty.ret.span));
         }
         scope.pop();
     }

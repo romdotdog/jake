@@ -448,8 +448,8 @@ export enum VirtualIntegerTyEnum {
     I25 = 0b000000000011111111,
     U31 = 0b000000001001101101,
     U53 = 0b000001101001101101,
-    I54 = 0b000010111011111111,
-    U63 = 0b001000101001101101
+    I54 = 0b000011111011111111,
+    U63 = 0b001001101001101101
 }
 export class Never {
     constructor(public span: Span) {}

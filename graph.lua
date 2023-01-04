@@ -11,7 +11,7 @@ local types = {
     { 0, true, 31, false },
     { -31, true, 31, false },
     { 0, true, 32, false },
-    { 0, false, 53, true },
+    { 0, true, 53, false },
     { -53, true, 53, false },
     { -53, false, 53, true },
     { 0, true, 63, false },
@@ -41,11 +41,10 @@ local function coerce(s, t)
     return ((s[2] or not t[2]) and s[1] >= t[1] or s[1] > t[1]) and s[3] <= t[3] and (not s[4] or t[4]) -- sorry
 end
 
-print(#types)
 for i, v in pairs(types) do
     local from = ""
     for j = #types, 1, -1 do
         from = from .. (coerce(types[j], v) and "1" or "0")
     end
-    print(typeToString(v), "0b" .. from)
+    print(typeToString(v), i, "0b" .. from)
 end
