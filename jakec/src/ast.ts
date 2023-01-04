@@ -169,6 +169,10 @@ export class FunctionDeclaration {
     get exported(): boolean {
         return this.sig.exported;
     }
+
+    get host(): boolean {
+        return this.sig.host;
+    }
 }
 
 export enum UnOp {

@@ -14,14 +14,14 @@ class Toolchain {
     private idxToCompDep: Map<number, CompDep> = new Map();
     private program: Program = new Program();
 
-    private traverse(path: string, topLevel: boolean, maybeSrc?: string): Dep | undefined {
+    private traverse(path: string, maybeSrc?: string): Dep | undefined {
         const src = maybeSrc ?? this.system.load(path);
         if (src === undefined) {
             return undefined;
         }
         const idx = this.deps.length;
         const ast = new Parser(this.system, new Lexer(src), path, idx).parse();
-        const dep = new Dep(idx, path, src, ast, topLevel);
+        const dep = new Dep(idx, path, src, ast);
         this.deps.push(dep);
         this.pathToDep.set(path, dep);
         this.stack.push(dep);
@@ -36,7 +36,7 @@ class Toolchain {
                     dep.llv = Math.min(dep.llv, importDep.idx);
                 }
             } else {
-                const importDep = this.traverse(importPath, false);
+                const importDep = this.traverse(importPath);
                 dep.imports.push(importDep);
                 if (importDep !== undefined) {
                     dep.llv = Math.min(dep.llv, importDep.llv);
@@ -64,12 +64,13 @@ class Toolchain {
 
     public static compile(system: System, root: string, maybeSrc?: string) {
         const toolchain = new Toolchain(system);
-        toolchain.traverse(system.resolve(root), true, maybeSrc);
+        toolchain.traverse(system.resolve(root), maybeSrc);
         system.write(
             "a.ir",
             JSON.stringify(
                 toolchain.program,
-                (key, value) => key === "span" ? null : (typeof value === "bigint" ? value.toString() : value),
+                (key, value) =>
+                    key === "span" ? null : typeof value === "bigint" ? value.toString() : value,
                 2
             )
         );
@@ -81,13 +82,7 @@ export class Dep {
     public imports: Array<Dep | undefined> = [];
     public onStack = true;
     public llv: number;
-    constructor(
-        public idx: number,
-        public path: string,
-        public src: string,
-        public ast: Source,
-        public topLevel: boolean
-    ) {
+    constructor(public idx: number, public path: string, public src: string, public ast: Source) {
         this.llv = idx;
     }
 }

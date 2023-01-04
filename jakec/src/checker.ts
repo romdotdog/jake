@@ -214,15 +214,6 @@ export default class Checker {
             for (const item of dep.exported.values()) {
                 checker.resolve(item);
             }
-            if (dep.file.topLevel) {
-                const sym = dep.scope.find("main");
-                if (sym !== undefined && sym instanceof UnresolvedFunctions) {
-                    const resolved = checker.resolve(sym);
-                    if (resolved instanceof IR.FunctionImpl && resolved.params.length == 0) {
-                        resolved.internalName = "_start";
-                    }
-                }
-            }
         }
     }
 
@@ -385,8 +376,18 @@ export default class Checker {
             return new IR.Unreachable(item.sig.span);
         }
 
+        let host = item.host;
+        if (host) {
+            if (this.program.exportMap.has(name)) {
+                this.error(item.sig.span, "a function with this name is already host");
+                host = false;
+            } else {
+                this.program.exportMap.add(name);
+            }
+        }
+
         const internalName = IR.labelize(`${dep.file.path}/${name}_${ty.print()}`);
-        const fn = new IR.FunctionImpl(internalName, name, ty, params, [], []);
+        const fn = new IR.FunctionImpl(internalName, name, host, ty, params, [], []);
         this.resolveBody(fn, item.body, dep);
 
         this.declToFunction.set(item, fn);

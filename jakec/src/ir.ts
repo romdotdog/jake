@@ -3,6 +3,7 @@ import { Span } from "./lexer.js";
 
 export class Program {
     public contents: Fn[] = [];
+    public exportMap: Set<string> = new Set();
 }
 
 export type Fn = HostImport | FunctionImpl;
@@ -22,6 +23,7 @@ export class FunctionImpl {
     constructor(
         public internalName: string,
         public functionName: string,
+        public host: boolean,
         public ty: Exponential<WASMResultType>,
         public params: Local[],
         public locals: Local[],

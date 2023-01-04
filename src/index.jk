@@ -3,6 +3,6 @@ import host "jake/report" as report: u64 -> [];
 
 // fn: impls = [u32 -> u32]
 
-export function main(): [] {
+export host function _start(): [] {
     report(fn(4294967296));
 }

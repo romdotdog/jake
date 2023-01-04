@@ -61,6 +61,9 @@ export class CodeGen {
             fn.locals.map(l => this.localType(l.ty)),
             this.functionBody(fn)
         );
+        if (fn.host) {
+            this.module.addFunctionExport(fn.internalName, fn.functionName);
+        }
     }
 
     private result(result: IR.WASMResultType) {
