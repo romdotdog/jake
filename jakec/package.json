@@ -2,6 +2,7 @@
     "name": "jakec",
     "version": "0.0.0",
     "description": "An experimental compiler.",
+    "type": "module",
     "repository": {
         "type": "git",
         "url": "git+ssh://git@github.com/romdotdog/jake.git"
@@ -11,5 +12,8 @@
     "bugs": {
         "url": "https://github.com/romdotdog/jake/issues"
     },
-    "homepage": "https://github.com/romdotdog/jake#readme"
+    "homepage": "https://github.com/romdotdog/jake#readme",
+    "dependencies": {
+        "binaryen": "^111.0.0"
+    }
 }

@@ -1,6 +1,6 @@
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { relative, resolve } from "path";
-import { Span } from "./lexer";
+import { Span } from "./lexer.js";
 
 export default abstract class System {
     public load(path: string): string | undefined {
@@ -17,6 +17,10 @@ export default abstract class System {
 
     public relative(path: string): string {
         return relative(process.cwd(), path);
+    }
+
+    public write(path: string, content: string | Uint8Array) {
+        writeFileSync(path, content);
     }
 
     public abstract error(x: Diagnostic, src: string): void;

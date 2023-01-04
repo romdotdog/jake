@@ -1,19 +1,18 @@
-import * as AST from "./ast";
-import { Span } from "./lexer";
+import * as AST from "./ast.js";
+import { Span } from "./lexer.js";
 
 export class Program {
     public contents: Fn[] = [];
-    public entry: SingleFunction | null = null;
 }
 
-export type Fn = HostImport | SingleFunction | FunctionSum;
+export type Fn = HostImport | SingleFunction;
 
 export class HostImport {
     constructor(
         public internalName: string,
         public moduleName: string,
         public functionName: string,
-        public ty: Exponential | Never
+        public ty: Exponential<WASMStackType, WASMResultType> | Never
     ) {}
 }
 
@@ -21,13 +20,13 @@ export class SingleFunction {
     constructor(
         public internalName: string,
         public functionName: string,
-        public ty: Exponential,
+        public ty: Exponential<WASMResultType>,
         public params: Local[],
         public locals: Local[],
         public body: Statement[]
     ) {}
 
-    public addLocal(name: string, mut: boolean, ty: StackTy | Never) {
+    public addLocal(name: string, mut: boolean, ty: WASMStackType) {
         const local = new Local(this.locals.length, name, mut, ty);
         this.locals.push(local);
         return local;
@@ -42,13 +41,16 @@ export class FunctionSum {
     ) {}
 }
 
+export type WASMStackType = StackTy | Never;
+export type WASMResultType = WASMStackType | Void;
+
 export class Local {
     public internalName: string;
     constructor(
         public idx: number,
         public name: string,
         public mut: boolean,
-        public ty: StackTy | Never
+        public ty: WASMStackType
     ) {
         this.internalName = labelize(`${name}_${ty.print()}`);
     }
@@ -68,7 +70,7 @@ export class Drop {
     constructor(public expr: Expression) {}
 }
 
-export type Expression = Unreachable | LocalRef | Call | Integer | NumberExpr | ProductCtr;
+export type Expression = Unreachable | LocalRef | Call | Integer | Float | ProductCtr;
 export type VirtualExpression = Expression | VirtualInteger | SingleFunction;
 
 export class Unreachable {
@@ -83,7 +85,7 @@ export class Unreachable {
 }
 
 export class LocalRef {
-    constructor(public span: Span, public local: Local, public ty: Type) {}
+    constructor(public span: Span, public local: Local, public ty: WASMStackType) {}
 }
 
 export class Call {
@@ -103,8 +105,23 @@ export class ProductCtr {
     }
 }
 
+type IntegerStackTy = StackTy & {
+    value: AST.StackTyEnum.I32 | AST.StackTyEnum.U32 | AST.StackTyEnum.I64 | AST.StackTyEnum.U64;
+};
+
+export type IntegerTy = IntegerStackTy | HeapTy;
+
+export function isIntegerTy(ty: unknown): ty is IntegerTy {
+    return (
+        ty instanceof HeapTy ||
+        (ty instanceof StackTy &&
+            ty.value !== AST.StackTyEnum.F32 &&
+            ty.value !== AST.StackTyEnum.F64)
+    );
+}
+
 export class Integer {
-    constructor(public span: Span, public value: bigint, public ty: StackTy | HeapTy) {}
+    constructor(public span: Span, public value: bigint, public ty: IntegerTy) {}
 }
 
 export class VirtualInteger {
@@ -157,23 +174,39 @@ export class VirtualInteger {
     }
 }
 
-export class NumberExpr {
-    constructor(public span: Span, public value: number, public ty: StackTy) {}
+export type FloatTy = StackTy & { value: AST.StackTyEnum.F32 | AST.StackTyEnum.F64 };
+
+export function isFloatTy(ty: unknown): ty is FloatTy {
+    return (
+        ty instanceof StackTy &&
+        (ty.value === AST.StackTyEnum.F32 || ty.value === AST.StackTyEnum.F64)
+    );
+}
+
+export class Float {
+    constructor(public span: Span, public value: number, public ty: FloatTy) {}
+}
+
+export interface TypeInterface {
+    equals(other: TypeInterface): boolean;
+    assignableTo(other: TypeInterface): boolean;
+    print(): string;
 }
 
 export type Type = ExponentialSum | Exponential | Product | StackTy | HeapTy | Never;
 export type VirtualType = Type | VirtualIntegerTy | VirtualExponential;
 
-export class VirtualExponential {
+export type VirtualExponential = Exponential<VirtualType>;
+export class Exponential<Param extends TypeInterface = Type, Result extends TypeInterface = Param> {
     constructor(
         public span: Span,
         public pure: boolean,
-        public params: VirtualType[],
-        public ret: VirtualType
+        public params: Param[],
+        public ret: Result
     ) {}
 
     public equals(other: VirtualType): boolean {
-        if (other instanceof VirtualExponential) {
+        if (other instanceof Exponential) {
             return (
                 this.pure == other.pure &&
                 this.params.length == other.params.length &&
@@ -184,11 +217,11 @@ export class VirtualExponential {
         return false;
     }
 
-    public assignableTo(other: VirtualType): boolean {
+    public assignableTo(other: TypeInterface): boolean {
         if (Product.isVoid(other)) {
             return true;
         }
-        if (other instanceof VirtualExponential) {
+        if (other instanceof Exponential) {
             return (
                 this.pure == other.pure &&
                 this.params.length == other.params.length &&
@@ -200,8 +233,8 @@ export class VirtualExponential {
     }
 
     public print(): string {
-        function formatType(ty: VirtualType): string {
-            if (ty instanceof VirtualExponential || ty instanceof ExponentialSum) {
+        function formatType(ty: TypeInterface): string {
+            if (ty instanceof Exponential || ty instanceof ExponentialSum) {
                 return `(${ty.print()})`;
             }
             return ty.print();
@@ -215,12 +248,6 @@ export class VirtualExponential {
         } else {
             return buffer.join(" -> ");
         }
-    }
-}
-
-export class Exponential extends VirtualExponential {
-    constructor(public span: Span, public pure: boolean, public params: Type[], public ret: Type) {
-        super(span, pure, params, ret);
     }
 }
 
@@ -263,7 +290,7 @@ export class Product {
         return <Void>new Product(span, []);
     }
 
-    public static isVoid(ty: VirtualType): ty is Void {
+    public static isVoid(ty: TypeInterface): ty is Void {
         return ty instanceof Product && ty.isVoid();
     }
 
@@ -456,7 +483,7 @@ export class TypedPattern {
 // this function will surjectively map arbitrary strings to labels
 // only pathological inputs will yield collisions
 export function labelize(x: string): string {
-    const buffer = ["$"];
+    const buffer = [];
     for (let i = 0; i < x.length; i++) {
         const code = x.charCodeAt(i);
         if (code === undefined) {
@@ -487,7 +514,7 @@ export function labelize(x: string): string {
                 case 125:
                     break;
                 default:
-                    buffer.push(x.charAt(code));
+                    buffer.push(String.fromCharCode(code));
             }
     }
     return buffer.join("");

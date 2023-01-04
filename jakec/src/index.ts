@@ -5,6 +5,7 @@ import Checker, { CompDep } from "./checker.js";
 import Lexer from "./lexer.js";
 import Parser from "./parser.js";
 import System, { ChildSystem, ConsoleSystem } from "./system.js";
+import { CodeGen } from "./codegen.js";
 
 class Toolchain {
     private deps: Dep[] = [];
@@ -64,6 +65,15 @@ class Toolchain {
     public static compile(system: System, root: string, maybeSrc?: string) {
         const toolchain = new Toolchain(system);
         toolchain.traverse(system.resolve(root), true, maybeSrc);
+        system.write(
+            "a.ir",
+            JSON.stringify(
+                toolchain.program,
+                (key, value) => key === "span" ? null : (typeof value === "bigint" ? value.toString() : value),
+                2
+            )
+        );
+        system.write("a.wat", CodeGen.run(system, toolchain.program, toolchain.deps));
     }
 }
 
