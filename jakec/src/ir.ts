@@ -14,7 +14,7 @@ export class HostImport {
         public internalName: string,
         public moduleName: string,
         public importFunctionName: string,
-        public functionName: string,
+        public name: string,
         public ty: Exponential<WASMStackType, WASMResultType>
     ) {}
 }
@@ -22,7 +22,7 @@ export class HostImport {
 export class FunctionImpl {
     constructor(
         public internalName: string,
-        public functionName: string,
+        public name: string,
         public host: boolean,
         public ty: Exponential<WASMResultType>,
         public params: Local[],
@@ -46,12 +46,7 @@ export type WASMResultType = WASMStackType | Void;
 
 export class Local {
     public internalName: string;
-    constructor(
-        public idx: number,
-        public name: string,
-        public mut: boolean,
-        public ty: WASMStackType
-    ) {
+    constructor(public idx: number, public name: string, public mut: boolean, public ty: WASMStackType) {
         this.internalName = labelize(`${name}_${ty.print()}`);
     }
 }
@@ -109,9 +104,7 @@ export type IntegerTy = IntegerStackTy | HeapTy;
 export function isIntegerTy(ty: unknown): ty is IntegerTy {
     return (
         ty instanceof HeapTy ||
-        (ty instanceof StackTy &&
-            ty.value !== AST.StackTyEnum.F32 &&
-            ty.value !== AST.StackTyEnum.F64)
+        (ty instanceof StackTy && ty.value !== AST.StackTyEnum.F32 && ty.value !== AST.StackTyEnum.F64)
     );
 }
 
@@ -172,10 +165,7 @@ export class VirtualInteger {
 export type FloatTy = StackTy & { value: AST.StackTyEnum.F32 | AST.StackTyEnum.F64 };
 
 export function isFloatTy(ty: unknown): ty is FloatTy {
-    return (
-        ty instanceof StackTy &&
-        (ty.value === AST.StackTyEnum.F32 || ty.value === AST.StackTyEnum.F64)
-    );
+    return ty instanceof StackTy && (ty.value === AST.StackTyEnum.F32 || ty.value === AST.StackTyEnum.F64);
 }
 
 export class Float {
@@ -193,12 +183,7 @@ export type VirtualType = Type | VirtualIntegerTy | VirtualExponential;
 
 export type VirtualExponential = Exponential<VirtualType>;
 export class Exponential<Param extends TypeInterface = Type, Result extends TypeInterface = Param> {
-    constructor(
-        public span: Span,
-        public pure: boolean,
-        public params: Param[],
-        public ret: Result
-    ) {}
+    constructor(public span: Span, public pure: boolean, public params: Param[], public ret: Result) {}
 
     public equals(other: VirtualType): boolean {
         if (other instanceof Exponential) {
@@ -295,10 +280,7 @@ export class Product {
 
     public equals(other: VirtualType): boolean {
         if (other instanceof Product) {
-            return (
-                this.fields.length == other.fields.length &&
-                this.fields.every((v, i) => v.equals(other.fields[i]))
-            );
+            return this.fields.length == other.fields.length && this.fields.every((v, i) => v.equals(other.fields[i]));
         }
         return false;
     }
@@ -401,11 +383,7 @@ export class VirtualIntegerTy {
         if (Product.isVoid(other)) {
             return true;
         }
-        if (
-            other instanceof VirtualIntegerTy ||
-            other instanceof StackTy ||
-            other instanceof HeapTy
-        ) {
+        if (other instanceof VirtualIntegerTy || other instanceof StackTy || other instanceof HeapTy) {
             const otherMask = other.value;
             const thisId = 1 << (31 - Math.clz32(this.value));
             return (otherMask & thisId) !== 0;

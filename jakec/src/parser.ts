@@ -62,12 +62,7 @@ export default class Parser {
         return result;
     }
 
-    constructor(
-        private system: System,
-        private lexer: Lexer,
-        private path: string,
-        private idx: number
-    ) {
+    constructor(private system: System, private lexer: Lexer, private path: string, private idx: number) {
         this.lookahead = this.lexer.next();
     }
 
@@ -222,12 +217,7 @@ export default class Parser {
         return this.simpleAtom(this.literal());
     }
 
-    private subatom(
-        start: number,
-        left: AST.Atom | null,
-        minPrec: number,
-        ignoreGt = false
-    ): AST.Atom | null {
+    private subatom(start: number, left: AST.Atom | null, minPrec: number, ignoreGt = false): AST.Atom | null {
         while (true) {
             const opInfo = binOps.get(this.lookahead);
             if (opInfo == null) break;
@@ -360,8 +350,8 @@ export default class Parser {
             if (this.eat(Token.Colon)) {
                 returnTy = this.atom();
             }
+            const sigSpan = this.from(start);
             const signature = new AST.FunctionSignature(
-                this.from(start),
                 exported,
                 host,
                 name,
@@ -370,7 +360,7 @@ export default class Parser {
                 returnTy
             );
             const body = this.statements();
-            return new AST.FunctionDeclaration(this.from(start), signature, body);
+            return new AST.FunctionDeclaration(sigSpan, this.from(start), signature, body);
         } else {
             this.error(this.span, "expected identifier for function");
         }
@@ -618,13 +608,7 @@ const unOps = new Map([
 ]);
 
 const statementRecovery = new Set([Token.Semicolon, Token.RightBrace, Token.EOF]);
-const topLevelRecovery = new Set([
-    Token.Import,
-    Token.Function,
-    Token.Type,
-    Token.Export,
-    Token.EOF
-]);
+const topLevelRecovery = new Set([Token.Import, Token.Function, Token.Type, Token.Export, Token.EOF]);
 enum TopLevelContext {
     Imports,
     HostImports,

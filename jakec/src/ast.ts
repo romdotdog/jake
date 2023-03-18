@@ -15,12 +15,7 @@ export class Import {
 }
 
 export class HostImport {
-    constructor(
-        public span: Span,
-        public path: StringLiteral,
-        public name: Span,
-        public ty: Atom | null
-    ) {}
+    constructor(public span: Span, public path: StringLiteral, public name: Span, public ty: Atom | null) {}
 }
 
 export type Statement = Let | Return | Assign | Atom | Item;
@@ -34,12 +29,7 @@ export class Return {
 }
 
 export class Assign {
-    constructor(
-        public span: Span,
-        public kind: BinOp,
-        public left: Atom | null,
-        public right: Atom | null
-    ) {}
+    constructor(public span: Span, public kind: BinOp, public left: Atom | null, public right: Atom | null) {}
 }
 
 export type Atom =
@@ -71,12 +61,7 @@ export class Ascription {
 }
 
 export class Binary {
-    constructor(
-        public span: Span,
-        public kind: BinOp,
-        public left: Atom | null,
-        public right: Atom | null
-    ) {}
+    constructor(public span: Span, public kind: BinOp, public left: Atom | null, public right: Atom | null) {}
 }
 
 export class Unary {
@@ -149,7 +134,6 @@ export type Item = FunctionDeclaration;
 
 export class FunctionSignature {
     constructor(
-        public span: Span,
         public exported: boolean,
         public host: boolean,
         public name: Span,
@@ -160,7 +144,7 @@ export class FunctionSignature {
 }
 
 export class FunctionDeclaration {
-    constructor(public span: Span, public sig: FunctionSignature, public body: Statement[]) {}
+    constructor(public span: Span, public fullSpan: Span, public sig: FunctionSignature, public body: Statement[]) {}
 
     get name(): Span {
         return this.sig.name;

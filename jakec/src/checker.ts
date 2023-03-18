@@ -4,11 +4,6 @@ import * as IR from "./ir.js";
 import { Span } from "./lexer.js";
 import System, { DiagnosticSeverity } from "./system.js";
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function unreachable(_x: never): never {
-    throw new Error("unreachable");
-}
-
 // strange that typescript needs help with this simple type narrow
 // stupid javascript semantics, maybe?
 function isExponential(atom: AST.Binary): atom is AST.Binary & { kind: AST.BinOp.Arrow } {
@@ -45,38 +40,35 @@ export default class Checker {
 
     private exportStage(unit: Dep[]) {
         for (const dep of unit) {
-            const scope = new Scope();
-            const exported: Map<string, UnresolvedSym> = new Map();
-            const compDep = new CompDep(dep, scope, exported);
+            const scope: Map<string, UnresolvedFunctions> = new Map();
+            const exported: Map<string, UnresolvedFunctions> = new Map();
+            const compDep = new CompDep(dep, new Scope(undefined, scope), exported);
 
             for (const item of dep.ast.items) {
+                // enumerate functions and add to scope
                 const name = item.name.link(dep.src);
-                const nativeSym = scope.getSameScope(name);
-                if (nativeSym !== undefined) {
-                    if (nativeSym instanceof UnresolvedFunctions) {
-                        nativeSym.items.push(item);
-                    } else {
-                        throw new Error("invariant violated");
-                    }
-                } else {
-                    scope.set(name, new UnresolvedFunctions(compDep, [item], []));
-                }
+                this.addImpl(scope, name, item, compDep);
                 if (item.exported) {
-                    const exportedSym = exported.get(name);
-                    if (exportedSym !== undefined) {
-                        if (exportedSym instanceof UnresolvedFunctions) {
-                            exportedSym.items.push(item);
-                        } else {
-                            throw new Error("invariant violated");
-                        }
-                    } else {
-                        exported.set(name, new UnresolvedFunctions(compDep, [item], []));
-                    }
+                    this.addImpl(exported, name, item, compDep);
                 }
             }
 
             this.unit.push(compDep);
             this.idxToCompDep.set(dep.idx, compDep);
+        }
+    }
+
+    private addImpl(
+        scope: Map<string, UnresolvedFunctions>,
+        name: string,
+        item: AST.FunctionDeclaration | IR.HostImport,
+        compDep: CompDep
+    ) {
+        const sym = scope.get(name);
+        if (sym !== undefined) {
+            sym.items.push(item);
+        } else {
+            scope.set(name, new UnresolvedFunctions(compDep, [item]));
         }
     }
 
@@ -101,23 +93,18 @@ export default class Checker {
                 for (const item of import_.with_) {
                     const originalName = item[0].link(file.src);
                     const newName = item[1].link(file.src);
-                    const sym = importDep.exported.get(originalName);
+                    const sym: UnresolvedFunctions | undefined = importDep.exported.get(originalName);
                     if (sym) {
                         const nativeSym = scope.find(newName);
                         if (nativeSym) {
-                            if (
-                                sym instanceof UnresolvedFunctions &&
-                                nativeSym instanceof UnresolvedFunctions
-                            ) {
+                            if (sym instanceof UnresolvedFunctions && nativeSym instanceof UnresolvedFunctions) {
                                 Array.prototype.push.apply(nativeSym.items, sym.items);
                             } else {
                                 scope.set(newName, new IR.Unreachable(item[1]));
                                 this.error(item[1], "cannot use this name");
                             }
-                        } else if (sym instanceof UnresolvedFunctions) {
-                            scope.set(newName, new UnresolvedFunctions(dep, sym.items.slice(), []));
                         } else {
-                            unreachable(sym);
+                            scope.set(newName, new UnresolvedFunctions(dep, sym.items.slice()));
                         }
                     } else {
                         scope.set(newName, new IR.Unreachable(item[0]));
@@ -131,38 +118,7 @@ export default class Checker {
                 const functionName = pathComponents[last];
                 const moduleName = pathComponents.slice(0, last).join("/");
                 const name = hostImport.name.link(file.src);
-                let ty: IR.Exponential<IR.WASMStackType, IR.WASMResultType> | IR.Never | null =
-                    null;
-                if (hostImport.ty !== null) {
-                    if (hostImport.ty instanceof AST.Binary && isExponential(hostImport.ty)) {
-                        const resolvedTy = this.exponentialPred(
-                            hostImport.ty,
-                            (param: IR.Type): param is IR.WASMStackType => {
-                                if (param instanceof IR.StackTy || param instanceof IR.Never) {
-                                    return true;
-                                }
-                                this.error(hostImport.span, "not allowed");
-                                return false;
-                            },
-                            (result: IR.Type): result is IR.WASMResultType => {
-                                if (
-                                    result instanceof IR.StackTy ||
-                                    result instanceof IR.Never ||
-                                    IR.Product.isVoid(result)
-                                ) {
-                                    return true;
-                                }
-                                this.error(hostImport.span, "not allowed");
-                                return false;
-                            }
-                        );
-                        if (resolvedTy !== null) {
-                            ty = resolvedTy;
-                        }
-                    } else {
-                        this.error(hostImport.span, "type of host import must be exponential");
-                    }
-                }
+                const ty = this.resolveHostImportTy(hostImport);
                 if (ty === null) {
                     scope.set(name, new IR.Unreachable(hostImport.span));
                     continue;
@@ -179,16 +135,43 @@ export default class Checker {
                 const sym = scope.find(name);
                 if (sym !== undefined) {
                     if (sym instanceof UnresolvedFunctions) {
-                        sym.hostImports.push(resolvedImport);
+                        sym.items.push(resolvedImport);
                     } else {
                         scope.set(name, new IR.Unreachable(hostImport.name));
                         this.error(hostImport.name, "cannot use this name");
                     }
                 } else {
-                    scope.set(name, new UnresolvedFunctions(dep, [], [resolvedImport]));
+                    scope.set(name, new UnresolvedFunctions(dep, [resolvedImport]));
                 }
             }
         }
+    }
+
+    private resolveHostImportTy(hostImport: AST.HostImport) {
+        if (hostImport.ty !== null) {
+            if (hostImport.ty instanceof AST.Binary && isExponential(hostImport.ty)) {
+                return this.exponentialWithFilter(
+                    hostImport.ty,
+                    (param: IR.Type): param is IR.WASMStackType => {
+                        if (param instanceof IR.StackTy || param instanceof IR.Never) {
+                            return true;
+                        }
+                        this.error(hostImport.span, "not allowed");
+                        return false;
+                    },
+                    (result: IR.Type): result is IR.WASMResultType => {
+                        if (result instanceof IR.StackTy || result instanceof IR.Never || IR.Product.isVoid(result)) {
+                            return true;
+                        }
+                        this.error(hostImport.span, "not allowed");
+                        return false;
+                    }
+                );
+            } else {
+                this.error(hostImport.span, "type of host import must be exponential");
+            }
+        }
+        return null;
     }
 
     constructor(
@@ -236,59 +219,53 @@ export default class Checker {
     }
 
     private unsafeResolve(sym: UnresolvedSym): ResolvedSym {
-        if (sym instanceof UnresolvedFunctions) {
-            return this.resolveFunctions(sym);
+        return this.resolveFunctions(sym);
+    }
+
+    private resolveIfFnDecl(fn: AST.FunctionDeclaration | IR.HostImport) {
+        if (fn instanceof AST.FunctionDeclaration) {
+            return this.resolveFunction(fn);
         } else {
-            return unreachable(sym);
+            return fn;
         }
     }
 
     private resolveFunctions(sym: UnresolvedFunctions): ResolvedSym {
         if (sym.items.length == 1) {
-            const fn = sym.items[0];
-            return this.declToFunction.get(fn) ?? this.resolveFunction(fn);
+            return this.resolveIfFnDecl(sym.items[0]);
         }
 
+        let name = "";
         const fns: IR.Fn[] = [];
         const exponentials: IR.Exponential[] = [];
         for (const fn of sym.items) {
-            const newExp = this.declToFunction.get(fn) ?? this.resolveFunction(fn);
-            if (newExp instanceof IR.Unreachable) {
+            const resolvedFn = this.resolveIfFnDecl(fn);
+            if (resolvedFn instanceof IR.Unreachable) {
                 return new IR.Unreachable(sym.items[0].span);
             }
+            name ||= resolvedFn.name;
             for (const exp of exponentials) {
-                if (newExp.ty.equals(exp)) {
-                    this.error(fn.sig.span, "conflicting implementations");
-                    return new IR.Unreachable(fn.sig.span);
+                if (resolvedFn.ty.equals(exp)) {
+                    this.error(fn.span, "conflicting implementations");
+                    return new IR.Unreachable(fn.span);
                 }
             }
-            fns.push(newExp);
-            exponentials.push(newExp.ty);
+            fns.push(resolvedFn);
+            exponentials.push(resolvedFn.ty);
         }
 
-        for (const imp of sym.hostImports) {
-            for (const exp of exponentials) {
-                if (imp.ty.equals(exp)) {
-                    this.error(imp.span, "conflicting implementations");
-                    return new IR.Unreachable(imp.span);
-                }
-            }
-            fns.push(imp);
-            exponentials.push(imp.ty);
-        }
-
-        const dep = sym.dep;
-        return new IR.FunctionSum(
-            sym.items?.[0]?.sig?.name?.link(dep.file.src) ?? sym.hostImports[0].functionName,
-            fns,
-            new IR.ExponentialSum(exponentials[0].span, exponentials)
-        );
+        return new IR.FunctionSum(name, fns, new IR.ExponentialSum(exponentials[0].span, exponentials));
     }
 
     private resolveFunction(item: AST.FunctionDeclaration): IR.FunctionImpl | IR.Unreachable {
+        const cached = this.declToFunction.get(item);
+        if (cached) {
+            return cached;
+        }
+
         if (item.sig.ty !== undefined) {
-            this.error(item.sig.span, "polymorphism is not yet supported");
-            return new IR.Unreachable(item.sig.span);
+            this.error(item.span, "polymorphism is not yet supported");
+            return new IR.Unreachable(item.span);
         }
 
         const dep = this.idxToCompDep.get(item.span.idx);
@@ -296,11 +273,11 @@ export default class Checker {
             throw new Error("couldn't find dep");
         }
 
-        const tyParams: IR.WASMResultType[] = [];
+        const paramTys: IR.WASMResultType[] = [];
         const params = [];
         for (const param of item.sig.params) {
             if (param === null) {
-                return new IR.Unreachable(item.sig.span);
+                return new IR.Unreachable(item.span);
             }
             const pattern = this.pattern(param);
             if (pattern === null) {
@@ -308,12 +285,8 @@ export default class Checker {
             }
 
             const ty = pattern.ty;
-            if (
-                ty instanceof IR.ExponentialSum ||
-                ty instanceof IR.Exponential ||
-                ty instanceof IR.Product
-            ) {
-                this.error(pattern.ty.span, "params cannot have this type");
+            if (ty instanceof IR.ExponentialSum || ty instanceof IR.Exponential || ty instanceof IR.Product) {
+                this.error(pattern.ty.span, "inlining is not yet supported");
                 return new IR.Unreachable(param.span);
             }
 
@@ -322,26 +295,26 @@ export default class Checker {
                 return new IR.Unreachable(param.span);
             }
 
-            tyParams.push(ty);
+            paramTys.push(ty);
             const name = pattern.untyped.ident.span.link(dep.file.src);
             params.push(new IR.Local(params.length, name, pattern.untyped.mut, ty));
         }
-        if (tyParams.length == 0) {
-            tyParams.push(IR.Product.void(item.sig.span));
+        if (paramTys.length == 0) {
+            paramTys.push(IR.Product.void(item.span));
         }
 
         let returnTy: IR.Type;
         const returnTyAtom = item.sig.returnTy;
         switch (returnTyAtom) {
             case undefined:
-                this.error(item.sig.span, "type inference is not yet supported");
+                this.error(item.span, "type inference is not yet supported");
             // fallthrough
             case null:
-                return new IR.Unreachable(item.sig.span);
+                return new IR.Unreachable(item.span);
             default: {
                 const resolvedTy = this.ty(returnTyAtom);
                 if (resolvedTy === null) {
-                    return new IR.Unreachable(item.sig.span);
+                    return new IR.Unreachable(item.span);
                 }
                 returnTy = resolvedTy;
             }
@@ -352,7 +325,7 @@ export default class Checker {
             returnTy instanceof IR.Exponential ||
             (returnTy instanceof IR.Product && !IR.Product.isVoid(returnTy))
         ) {
-            this.error(returnTy.span, "returns cannot have this type");
+            this.error(returnTy.span, "inlining is not yet supported");
             return new IR.Unreachable(returnTy.span);
         }
 
@@ -361,25 +334,25 @@ export default class Checker {
             return new IR.Unreachable(returnTy.span);
         }
 
-        const ty = new IR.Exponential(item.sig.span, false, tyParams, returnTy);
+        const ty = new IR.Exponential(item.span, false, paramTys, returnTy);
         const name = item.sig.name.link(dep.file.src);
 
         const binOp = AST.nameToBinOp.get(name);
         if (binOp && ty.params.length !== 2) {
-            this.error(item.sig.span, "binary operator overloads must take exactly two parameters");
-            return new IR.Unreachable(item.sig.span);
+            this.error(item.span, "binary operator overloads must take exactly two parameters");
+            return new IR.Unreachable(item.span);
         }
 
         const unOp = AST.nameToUnOp.get(name);
         if (unOp && ty.params.length !== 1) {
-            this.error(item.sig.span, "unary operator overloads must take exactly one parameter");
-            return new IR.Unreachable(item.sig.span);
+            this.error(item.span, "unary operator overloads must take exactly one parameter");
+            return new IR.Unreachable(item.span);
         }
 
         let host = item.host;
         if (host) {
             if (this.program.exportMap.has(name)) {
-                this.error(item.sig.span, "a function with this name is already host");
+                this.error(item.span, "a function with this name is already host");
                 host = false;
             } else {
                 this.program.exportMap.add(name);
@@ -431,14 +404,16 @@ export default class Checker {
             const name = pattern.untyped.ident.span.link(dep.file.src);
             const ty = pattern.ty;
             const isUnsupported =
-                ty instanceof IR.ExponentialSum ||
-                ty instanceof IR.Exponential ||
-                ty instanceof IR.Product;
+                ty instanceof IR.ExponentialSum || ty instanceof IR.Exponential || ty instanceof IR.Product;
             const isHeapTy = ty instanceof IR.HeapTy;
 
             if (statement.expr === null || isUnsupported || isHeapTy) {
                 if (isUnsupported) {
-                    this.error(pattern.ty.span, "locals cannot have this type");
+                    if (pattern.untyped.mut) {
+                        this.error(pattern.ty.span, "mutable locals cannot have this type");
+                    } else {
+                        this.error(pattern.ty.span, "TODO: constant propagation");
+                    }
                 } else if (isHeapTy) {
                     this.error(pattern.ty.span, "heap types cannot exist on the stack");
                 }
@@ -489,12 +464,7 @@ export default class Checker {
                 new IR.LocalSet(
                     sym,
                     this.checkExpr(
-                        new AST.Binary(
-                            statement.span,
-                            statement.kind,
-                            statement.left,
-                            statement.right
-                        ),
+                        new AST.Binary(statement.span, statement.kind, statement.left, statement.right),
                         dep,
                         sym.ty
                     )
@@ -518,6 +488,7 @@ export default class Checker {
             return true;
         } else if (statement instanceof AST.FunctionDeclaration) {
             this.error(statement.span, "not yet supported");
+            // TODO: caught not nevering here, waiting for code coverage policy
             return false;
         } else {
             const expr = this.checkExpr(statement, dep, fn.ty.ret);
@@ -530,10 +501,7 @@ export default class Checker {
         const virtualExpr = this.checkExprInner(atom, dep, ty);
         if (virtualExpr instanceof IR.VirtualInteger) {
             if (ty === undefined) {
-                this.error(
-                    atom.span,
-                    "required type annotation (inferred " + virtualExpr.ty.print() + ")"
-                );
+                this.error(atom.span, "required type annotation (inferred " + virtualExpr.ty.print() + ")");
                 return new IR.Unreachable(atom.span);
             } else if (virtualExpr.ty.assignableTo(ty)) {
                 if (ty instanceof IR.Product) {
@@ -555,11 +523,7 @@ export default class Checker {
         return virtualExpr;
     }
 
-    private callWithCoercion(
-        span: Span,
-        fn: IR.Fn,
-        args: IR.VirtualExpression[]
-    ): IR.Call | IR.Unreachable {
+    private callWithCoercion(span: Span, fn: IR.Fn, args: IR.VirtualExpression[]): IR.Call | IR.Unreachable {
         const coercedArgs = new Array(args.length);
         for (let i = 0; i < args.length; i++) {
             const arg = args[i];
@@ -572,6 +536,7 @@ export default class Checker {
                     } else if (IR.isIntegerTy(destTy)) {
                         coercedArgs[i] = new IR.Integer(arg.span, arg.value, destTy);
                     } else {
+                        // TODO: coercion to f32 (Math.fround)
                         throw new Error();
                     }
                 } else {
@@ -585,11 +550,7 @@ export default class Checker {
     }
 
     // resulting expression is guaranteed to be assignable to ty
-    private checkExprInner(
-        atom: AST.Atom,
-        dep: CompDep,
-        ty?: IR.VirtualType
-    ): IR.VirtualExpression {
+    private checkExprInner(atom: AST.Atom, dep: CompDep, ty?: IR.VirtualType): IR.VirtualExpression {
         if (atom instanceof AST.Ascription) {
             if (atom.expr === null || atom.ty === null) {
                 return new IR.Unreachable(atom.span);
@@ -644,18 +605,10 @@ export default class Checker {
             if (name === undefined) {
                 throw new Error("unclassified op");
             }
-            const args = [
-                this.checkExprInner(atom.left, dep),
-                this.checkExprInner(atom.right, dep)
-            ];
+            const args = [this.checkExprInner(atom.left, dep), this.checkExprInner(atom.right, dep)];
             const params = args.map(v => v.ty);
-            const virt = new IR.Exponential(
-                atom.span,
-                false,
-                params,
-                ty ?? IR.Product.void(atom.span)
-            );
-            const res = this.findImplementation(dep.scope, name, virt);
+            const virt = new IR.Exponential(atom.span, false, params, ty ?? IR.Product.void(atom.span));
+            const res: IR.Unreachable | IR.Fn[] | null = this.findImplementation(dep.scope, name, virt);
             if (res instanceof IR.Unreachable) {
                 return new IR.Unreachable(atom.span);
             } else if (res === null) {
@@ -679,7 +632,7 @@ export default class Checker {
             }
             const args = [this.checkExprInner(atom.right, dep)];
             const params = args.map(v => v.ty);
-            const res = this.findImplementation(
+            const res: IR.Unreachable | IR.Fn[] | null = this.findImplementation(
                 dep.scope,
                 name,
                 new IR.Exponential(atom.span, false, params, ty ?? IR.Product.void(atom.span))
@@ -700,7 +653,7 @@ export default class Checker {
         } else if (atom instanceof AST.Ident) {
             const value = atom.span.link(dep.file.src);
             if (ty instanceof IR.Exponential) {
-                const res = this.findImplementation(dep.scope, value, ty);
+                const res: IR.Unreachable | IR.Fn[] | null = this.findImplementation(dep.scope, value, ty);
                 if (res instanceof IR.Unreachable) {
                     return new IR.Unreachable(atom.span);
                 } else if (res === null) {
@@ -716,7 +669,7 @@ export default class Checker {
                     return new IR.Unreachable(atom.span);
                 }
             } else {
-                const res = dep.scope.find(value);
+                const res: IR.Local | UnresolvedFunctions | IR.Unreachable | undefined = dep.scope.find(value);
                 if (res === undefined) {
                     this.error(atom.span, "no symbol found");
                     return new IR.Unreachable(atom.span);
@@ -732,11 +685,9 @@ export default class Checker {
                     } else {
                         return new IR.LocalRef(atom.span, res, res.ty);
                     }
-                } else if (res instanceof UnresolvedFunctions) {
+                } else {
                     this.error(atom.span, "type mismatch (functions in local context)");
                     return new IR.Unreachable(atom.span);
-                } else {
-                    unreachable(res);
                 }
             }
         } else if (atom instanceof AST.IntegerLiteral) {
@@ -755,6 +706,7 @@ export default class Checker {
                 return virtual;
             }
         } else if (atom instanceof AST.NumberLiteral) {
+            // TODO: coercion to f32 (Math.fround)
             if (!IR.isFloatTy(ty)) {
                 return new IR.Unreachable(atom.span);
             }
@@ -767,27 +719,18 @@ export default class Checker {
         ) {
             this.error(atom.span, "invalid expression");
             return new IR.Unreachable(atom.span);
-        } else if (
-            atom instanceof AST.TypeCall ||
-            atom instanceof AST.Product ||
-            atom instanceof AST.StringLiteral
-        ) {
+        } else if (atom instanceof AST.TypeCall || atom instanceof AST.Product || atom instanceof AST.StringLiteral) {
             this.error(atom.span, "not yet supported");
             return new IR.Unreachable(atom.span);
-        } else {
-            return unreachable(atom);
         }
+        return atom;
     }
 
-    private findImplementation(
-        scope: Scope,
-        name: string,
-        ty: IR.VirtualExponential
-    ): IR.Fn[] | IR.Unreachable | null {
-        const sym = scope.getSameScope(name);
+    private findImplementation(scope: Scope, name: string, ty: IR.VirtualExponential): IR.Fn[] | IR.Unreachable | null {
+        const sym: UnresolvedFunctions | IR.Unreachable | IR.Local | undefined = scope.getSameScope(name);
         if (sym !== undefined) {
             if (sym instanceof UnresolvedFunctions) {
-                const resolvedSym = this.resolve(sym);
+                const resolvedSym: IR.FunctionSum | IR.Fn | IR.Unreachable = this.resolve(sym);
                 if (resolvedSym instanceof IR.FunctionSum) {
                     const impls = [];
                     for (const fn of resolvedSym.impls) {
@@ -798,21 +741,17 @@ export default class Checker {
                     if (impls.length > 0) {
                         return impls;
                     }
-                } else if (resolvedSym instanceof IR.FunctionImpl) {
+                } else if (resolvedSym instanceof IR.FunctionImpl || resolvedSym instanceof IR.HostImport) {
                     if (ty.assignableTo(resolvedSym.ty)) {
                         return [resolvedSym];
                     }
-                } else if (resolvedSym instanceof IR.Unreachable) {
-                    return resolvedSym;
                 } else {
-                    unreachable(resolvedSym);
+                    return resolvedSym;
                 }
             } else if (sym instanceof IR.Unreachable) {
                 return sym;
-            } else if (sym instanceof IR.Local) {
-                return null;
             } else {
-                unreachable(sym);
+                return null;
             }
         }
         return scope.parent ? this.findImplementation(scope.parent, name, ty) : [];
@@ -899,17 +838,17 @@ export default class Checker {
         return null;
     }
 
-    private exponentialPred<Param extends IR.Type, Result extends IR.Type>(
+    private exponentialWithFilter<Param extends IR.Type, Result extends IR.Type>(
         atom: AST.Binary & { kind: AST.BinOp.Arrow },
-        predParam: (x: IR.Type) => x is Param,
-        predResult: (x: IR.Type) => x is Result
+        paramFilter: (x: IR.Type) => x is Param,
+        resultFilter: (x: IR.Type) => x is Result
     ): IR.Exponential<Param, Result> | null {
         // right associative
         if (atom.right === null) {
             return null;
         }
         const ret = this.ty(atom.right);
-        if (ret === null || !predResult(ret)) {
+        if (ret === null || !resultFilter(ret)) {
             return null;
         }
         let next: AST.Atom | null | undefined = atom.left;
@@ -929,7 +868,7 @@ export default class Checker {
             }
 
             const ty = this.ty(possibleExp);
-            if (ty === null || !predParam(ty)) {
+            if (ty === null || !paramFilter(ty)) {
                 return null;
             }
             params.push(ty);
@@ -938,7 +877,7 @@ export default class Checker {
     }
 
     private exponential(atom: AST.Binary & { kind: AST.BinOp.Arrow }): IR.Exponential | null {
-        return this.exponentialPred(atom, identityGuard, identityGuard);
+        return this.exponentialWithFilter(atom, identityGuard, identityGuard);
     }
 
     private sum(atom: AST.Binary & { kind: AST.BinOp.Or }): IR.ExponentialSum | null {
@@ -967,10 +906,7 @@ export default class Checker {
                 return null;
             }
             if (!(possibleExp instanceof AST.Binary) || !isExponential(possibleExp)) {
-                this.error(
-                    possibleExp.span,
-                    "cannot mix sum exponential types and sum types; use parentheses"
-                );
+                this.error(possibleExp.span, "cannot mix sum exponential types and sum types; use parentheses");
                 return null;
             }
             const newExp = this.exponential(possibleExp);
@@ -979,10 +915,7 @@ export default class Checker {
             }
             for (const exp of exponentials) {
                 if (newExp.equals(exp)) {
-                    this.error(
-                        newExp.span,
-                        "cannot have two of the same exponential type in the same sum type"
-                    );
+                    this.error(newExp.span, "cannot have two of the same exponential type in the same sum type");
                     return null;
                 }
             }
@@ -1007,11 +940,7 @@ export default class Checker {
 }
 
 export class CompDep {
-    constructor(
-        public file: Dep,
-        public scope: Scope,
-        public exported: Map<string, UnresolvedSym>
-    ) {}
+    constructor(public file: Dep, public scope: Scope, public exported: Map<string, UnresolvedSym>) {}
 }
 
 class Scope {
@@ -1051,13 +980,9 @@ class Scope {
 }
 
 type Sym = IR.Local | UnresolvedFunctions | IR.Unreachable;
-type ResolvedSym = IR.FunctionSum | IR.FunctionImpl | IR.Unreachable;
+type ResolvedSym = IR.FunctionSum | IR.Fn | IR.Unreachable;
 type UnresolvedSym = UnresolvedFunctions;
 
 class UnresolvedFunctions {
-    constructor(
-        public dep: CompDep,
-        public items: AST.FunctionDeclaration[],
-        public hostImports: IR.HostImport[]
-    ) {}
+    constructor(public dep: CompDep, public items: Array<AST.FunctionDeclaration | IR.HostImport>) {}
 }
