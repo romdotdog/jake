@@ -1,6 +1,6 @@
 import { Span } from "./lexer";
 
-export class Source {
+export class Root {
     constructor(public imports: Import[], public hostImports: HostImport[], public items: Item[]) {}
 }
 

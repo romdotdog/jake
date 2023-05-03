@@ -8,7 +8,7 @@ export default class Parser {
     private start = 0;
     private end = 0;
     private topLevelContext = TopLevelContext.Imports;
-    private source = new AST.Source([], [], []);
+    private source = new AST.Root([], [], []);
     private quiet = false;
 
     private error(span: Span, message: string, important = false) {
@@ -543,7 +543,7 @@ export default class Parser {
         }
     }
 
-    public parse(): AST.Source {
+    public parse(): AST.Root {
         while (this.lookahead != Token.EOF) {
             this.topLevel();
         }

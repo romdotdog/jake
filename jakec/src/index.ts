@@ -1,63 +1,63 @@
 import { join } from "path";
-import { Source } from "./ast.js";
+import { Root } from "./ast.js";
 import { Program } from "./ir.js";
-import Checker, { CompDep } from "./checker.js";
+import Checker, { Source } from "./checker.js";
 import Lexer from "./lexer.js";
 import Parser from "./parser.js";
 import System, { ChildSystem, ConsoleSystem } from "./system.js";
 import { CodeGen } from "./codegen.js";
 
 class Toolchain {
-    private deps: Dep[] = [];
-    private stack: Dep[] = [];
-    private pathToDep: Map<string, Dep> = new Map();
-    private idxToCompDep: Map<number, CompDep> = new Map();
+    private files: File[] = [];
+    private stack: File[] = [];
+    private pathToFile: Map<string, File> = new Map();
+    private idxToSource: Map<number, Source> = new Map();
     private program: Program = new Program();
 
-    private traverse(path: string, maybeSrc?: string): Dep | undefined {
+    private traverse(path: string, maybeSrc?: string): File | undefined {
         const src = maybeSrc ?? this.system.load(path);
         if (src === undefined) {
             return undefined;
         }
-        const idx = this.deps.length;
+        const idx = this.files.length;
         const ast = new Parser(this.system, new Lexer(src), path, idx).parse();
-        const dep = new Dep(idx, path, src, ast);
-        this.deps.push(dep);
-        this.pathToDep.set(path, dep);
-        this.stack.push(dep);
+        const file = new File(idx, path, src, ast);
+        this.files.push(file);
+        this.pathToFile.set(path, file);
+        this.stack.push(file);
 
         for (const import_ of ast.imports) {
             const relativePath = import_.path;
             const importPath = this.system.resolve(join(path, "..", relativePath.value));
-            const importDep = this.pathToDep.get(importPath);
-            if (importDep !== undefined) {
-                dep.imports.push(importDep);
-                if (importDep.onStack) {
-                    dep.llv = Math.min(dep.llv, importDep.idx);
+            const importFile = this.pathToFile.get(importPath);
+            if (importFile !== undefined) {
+                file.imports.push(importFile);
+                if (importFile.onStack) {
+                    file.llv = Math.min(file.llv, importFile.idx);
                 }
             } else {
-                const importDep = this.traverse(importPath);
-                dep.imports.push(importDep);
-                if (importDep !== undefined) {
-                    dep.llv = Math.min(dep.llv, importDep.llv);
+                const importFile = this.traverse(importPath);
+                file.imports.push(importFile);
+                if (importFile !== undefined) {
+                    file.llv = Math.min(file.llv, importFile.llv);
                 }
             }
         }
 
-        if (idx == dep.llv) {
+        if (idx == file.llv) {
             let i = this.stack.length;
             while (i > 0 && i != idx) {
                 i -= 1;
-                const node = this.deps[i];
+                const node = this.files[i];
                 node.onStack = false;
                 node.llv = idx;
             }
 
             const unit = this.stack.splice(i);
-            Checker.run(this.system, this.program, this.idxToCompDep, this.deps, unit);
+            Checker.run(this.system, this.program, this.idxToSource, this.files, unit);
         }
 
-        return dep;
+        return file;
     }
 
     constructor(private system: System) {}
@@ -69,20 +69,20 @@ class Toolchain {
             "a.ir",
             JSON.stringify(
                 toolchain.program,
-                (key, value) =>
-                    key === "span" ? null : typeof value === "bigint" ? value.toString() : value,
+                (key, value) => (key === "span" ? null : typeof value === "bigint" ? value.toString() : value),
                 2
             )
         );
-        system.write("a.wat", CodeGen.run(system, toolchain.program, toolchain.deps));
+        system.write("a.wat", CodeGen.run(system, toolchain.program, toolchain.files));
     }
 }
 
-export class Dep {
-    public imports: Array<Dep | undefined> = [];
+// TODO: fix field leak
+export class File {
+    public imports: Array<File | undefined> = [];
     public onStack = true;
     public llv: number;
-    constructor(public idx: number, public path: string, public src: string, public ast: Source) {
+    constructor(public idx: number, public path: string, public code: string, public ast: Root) {
         this.llv = idx;
     }
 }

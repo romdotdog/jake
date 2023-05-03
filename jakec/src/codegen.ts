@@ -1,4 +1,4 @@
-import { Dep } from ".";
+import { File } from ".";
 import * as AST from "./ast.js";
 import * as IR from "./ir.js";
 import binaryen from "binaryen/index.js";
@@ -14,22 +14,22 @@ export class CodeGen {
     private module = new binaryen.Module();
 
     private error(span: Span, message: string) {
-        const dep = this.deps[span.idx];
+        const file = this.files[span.idx];
         this.system.error(
             {
-                path: dep.path,
+                path: file.path,
                 span,
                 message,
                 severity: DiagnosticSeverity.Error
             },
-            dep.src
+            file.code
         );
     }
 
-    constructor(private system: System, private program: IR.Program, private deps: Dep[]) {}
+    constructor(private system: System, private program: IR.Program, private files: File[]) {}
 
-    public static run(system: System, program: IR.Program, deps: Dep[]): string {
-        const codegen = new CodeGen(system, program, deps);
+    public static run(system: System, program: IR.Program, files: File[]): string {
+        const codegen = new CodeGen(system, program, files);
         for (const fn of program.contents) {
             if (fn instanceof IR.HostImport) {
                 if (fn.ty instanceof IR.Never) {
@@ -62,7 +62,7 @@ export class CodeGen {
             this.functionBody(fn)
         );
         if (fn.host) {
-            this.module.addFunctionExport(fn.internalName, fn.functionName);
+            this.module.addFunctionExport(fn.internalName, fn.name);
         }
     }
 

@@ -1,4 +1,4 @@
-import { Dep } from ".";
+import { File } from ".";
 import * as AST from "./ast.js";
 import * as IR from "./ir.js";
 import { Span } from "./lexer.js";
@@ -19,42 +19,42 @@ function identityGuard<T>(x: T): x is T {
 }
 
 export default class Checker {
-    private unit: CompDep[] = [];
+    private unit: Source[] = [];
     private symToResolvedSym: Map<UnresolvedSym, ResolvedSym> = new Map();
     private declToFunction: Map<AST.FunctionDeclaration, IR.FunctionImpl> = new Map();
     private resolutionStack: UnresolvedSym[] = [];
     private resolutionSet: Set<UnresolvedSym> = new Set();
 
     private error(span: Span, message: string) {
-        const dep = this.deps[span.idx];
+        const file = this.files[span.idx];
         this.system.error(
             {
-                path: dep.path,
+                path: file.path,
                 span,
                 message,
                 severity: DiagnosticSeverity.Error
             },
-            dep.src
+            file.code
         );
     }
 
-    private exportStage(unit: Dep[]) {
-        for (const dep of unit) {
+    private exportStage(unit: File[]) {
+        for (const file of unit) {
             const scope: Map<string, UnresolvedFunctions> = new Map();
             const exported: Map<string, UnresolvedFunctions> = new Map();
-            const compDep = new CompDep(dep, new Scope(undefined, scope), exported);
+            const source = new Source(file, new Scope(undefined, scope), exported);
 
-            for (const item of dep.ast.items) {
+            for (const item of file.ast.items) {
                 // enumerate functions and add to scope
-                const name = item.name.link(dep.src);
-                this.addImpl(scope, name, item, compDep);
+                const name = item.name.link(file.code);
+                this.addImpl(scope, name, item, source);
                 if (item.exported) {
-                    this.addImpl(exported, name, item, compDep);
+                    this.addImpl(exported, name, item, source);
                 }
             }
 
-            this.unit.push(compDep);
-            this.idxToCompDep.set(dep.idx, compDep);
+            this.unit.push(source);
+            this.idxToSource.set(file.idx, source);
         }
     }
 
@@ -62,38 +62,38 @@ export default class Checker {
         scope: Map<string, UnresolvedFunctions>,
         name: string,
         item: AST.FunctionDeclaration | IR.HostImport,
-        compDep: CompDep
+        source: Source
     ) {
         const sym = scope.get(name);
         if (sym !== undefined) {
             sym.items.push(item);
         } else {
-            scope.set(name, new UnresolvedFunctions(compDep, [item]));
+            scope.set(name, new UnresolvedFunctions(source, [item]));
         }
     }
 
     private importStage() {
-        for (const dep of this.unit) {
-            const { file, scope } = dep;
+        for (const source of this.unit) {
+            const { file, scope } = source;
             const importIdx = file.imports;
             const imports = file.ast.imports;
             for (let i = 0; i < importIdx.length; i++) {
                 const import_ = imports[i];
-                const importRawDep = importIdx[i];
-                if (importRawDep === undefined) {
+                const importFile = importIdx[i];
+                if (importFile === undefined) {
                     this.error(import_.path.span, "unable to open file");
                     // TODO: never the import
                     continue;
                 }
-                const idx = importRawDep.idx;
-                const importDep = this.idxToCompDep.get(idx);
-                if (importDep === undefined) {
+                const idx = importFile.idx;
+                const importSource = this.idxToSource.get(idx);
+                if (importSource === undefined) {
                     throw new Error("imported an unresolved module");
                 }
                 for (const item of import_.with_) {
-                    const originalName = item[0].link(file.src);
-                    const newName = item[1].link(file.src);
-                    const sym: UnresolvedFunctions | undefined = importDep.exported.get(originalName);
+                    const originalName = item[0].link(file.code);
+                    const newName = item[1].link(file.code);
+                    const sym: UnresolvedFunctions | undefined = importSource.exported.get(originalName);
                     if (sym) {
                         const nativeSym = scope.find(newName);
                         if (nativeSym) {
@@ -104,7 +104,7 @@ export default class Checker {
                                 this.error(item[1], "cannot use this name");
                             }
                         } else {
-                            scope.set(newName, new UnresolvedFunctions(dep, sym.items.slice()));
+                            scope.set(newName, new UnresolvedFunctions(source, sym.items.slice()));
                         }
                     } else {
                         scope.set(newName, new IR.Unreachable(item[0]));
@@ -117,7 +117,7 @@ export default class Checker {
                 const last = pathComponents.length - 1;
                 const functionName = pathComponents[last];
                 const moduleName = pathComponents.slice(0, last).join("/");
-                const name = hostImport.name.link(file.src);
+                const name = hostImport.name.link(file.code);
                 const ty = this.resolveHostImportTy(hostImport);
                 if (ty === null) {
                     scope.set(name, new IR.Unreachable(hostImport.span));
@@ -141,7 +141,7 @@ export default class Checker {
                         this.error(hostImport.name, "cannot use this name");
                     }
                 } else {
-                    scope.set(name, new UnresolvedFunctions(dep, [resolvedImport]));
+                    scope.set(name, new UnresolvedFunctions(source, [resolvedImport]));
                 }
             }
         }
@@ -177,24 +177,24 @@ export default class Checker {
     constructor(
         private system: System,
         private program: IR.Program,
-        private idxToCompDep: Map<number, CompDep>,
-        public deps: Dep[]
+        private idxToSource: Map<number, Source>,
+        public files: File[]
     ) {}
 
     public static run(
         system: System,
         program: IR.Program,
-        idxToCompDep: Map<number, CompDep>,
-        deps: Dep[],
-        unit: Dep[]
+        idxToSource: Map<number, Source>,
+        files: File[],
+        unit: File[]
     ) {
-        const checker = new Checker(system, program, idxToCompDep, deps);
+        const checker = new Checker(system, program, idxToSource, files);
         checker.exportStage(unit);
         checker.importStage();
 
-        for (const dep of checker.unit) {
-            dep.scope.push();
-            for (const item of dep.exported.values()) {
+        for (const source of checker.unit) {
+            source.scope.push();
+            for (const item of source.exported.values()) {
                 checker.resolve(item);
             }
         }
@@ -268,9 +268,9 @@ export default class Checker {
             return new IR.Unreachable(item.span);
         }
 
-        const dep = this.idxToCompDep.get(item.span.idx);
-        if (dep === undefined) {
-            throw new Error("couldn't find dep");
+        const source = this.idxToSource.get(item.span.idx);
+        if (source === undefined) {
+            throw new Error("couldn't find source");
         }
 
         const paramTys: IR.WASMResultType[] = [];
@@ -296,7 +296,7 @@ export default class Checker {
             }
 
             paramTys.push(ty);
-            const name = pattern.untyped.ident.span.link(dep.file.src);
+            const name = pattern.untyped.ident.span.link(source.file.code);
             params.push(new IR.Local(params.length, name, pattern.untyped.mut, ty));
         }
         if (paramTys.length == 0) {
@@ -335,7 +335,7 @@ export default class Checker {
         }
 
         const ty = new IR.Exponential(item.span, false, paramTys, returnTy);
-        const name = item.sig.name.link(dep.file.src);
+        const name = item.sig.name.link(source.file.code);
 
         const binOp = AST.nameToBinOp.get(name);
         if (binOp && ty.params.length !== 2) {
@@ -359,24 +359,24 @@ export default class Checker {
             }
         }
 
-        const internalName = IR.labelize(`${dep.file.path}/${name}_${ty.print()}`);
+        const internalName = IR.labelize(`${source.file.path}/${name}_${ty.print()}`);
         const fn = new IR.FunctionImpl(internalName, name, host, ty, params, [], []);
-        this.resolveBody(fn, item.body, dep);
+        this.resolveBody(fn, item.body, source);
 
         this.declToFunction.set(item, fn);
         this.program.contents.push(fn);
         return fn;
     }
 
-    private resolveBody(fn: IR.FunctionImpl, body: AST.Statement[], dep: CompDep) {
-        const { file, scope } = dep;
+    private resolveBody(fn: IR.FunctionImpl, body: AST.Statement[], source: Source) {
+        const { file, scope } = source;
         scope.push();
         for (const param of fn.params) {
             scope.set(param.name, param);
         }
         let needsReturn = true;
         for (const statement of body) {
-            if (this.resolveStatement(fn, statement, dep)) {
+            if (this.resolveStatement(fn, statement, source)) {
                 needsReturn = false;
                 break;
             }
@@ -388,8 +388,8 @@ export default class Checker {
         scope.pop();
     }
 
-    private resolveStatement(fn: IR.FunctionImpl, statement: AST.Statement, dep: CompDep): boolean {
-        const { file, scope } = dep;
+    private resolveStatement(fn: IR.FunctionImpl, statement: AST.Statement, source: Source): boolean {
+        const { file, scope } = source;
         if (statement instanceof AST.Let) {
             if (statement.pattern === null) {
                 fn.body.push(IR.Unreachable.drop(statement.span));
@@ -401,7 +401,7 @@ export default class Checker {
                 return false;
             }
 
-            const name = pattern.untyped.ident.span.link(dep.file.src);
+            const name = pattern.untyped.ident.span.link(file.code);
             const ty = pattern.ty;
             const isUnsupported =
                 ty instanceof IR.ExponentialSum || ty instanceof IR.Exponential || ty instanceof IR.Product;
@@ -425,7 +425,7 @@ export default class Checker {
 
             const local = fn.addLocal(name, pattern.untyped.mut, ty);
             scope.set(name, local);
-            fn.body.push(new IR.LocalSet(local, this.checkExpr(statement.expr, dep, pattern.ty)));
+            fn.body.push(new IR.LocalSet(local, this.checkExpr(statement.expr, source, pattern.ty)));
             return false;
         } else if (statement instanceof AST.Assign) {
             if (statement.left === null) {
@@ -437,7 +437,7 @@ export default class Checker {
                 return false;
             }
 
-            const name = statement.left.span.link(file.src);
+            const name = statement.left.span.link(file.code);
             const sym = scope.find(name);
             if (sym === undefined) {
                 this.error(statement.left.span, "variable does not exist");
@@ -465,7 +465,7 @@ export default class Checker {
                     sym,
                     this.checkExpr(
                         new AST.Binary(statement.span, statement.kind, statement.left, statement.right),
-                        dep,
+                        source,
                         sym.ty
                     )
                 )
@@ -483,7 +483,7 @@ export default class Checker {
                 atom = statement.expr;
             }
 
-            const expr = this.checkExpr(atom, dep, fn.ty.ret);
+            const expr = this.checkExpr(atom, source, fn.ty.ret);
             fn.body.push(new IR.Return(expr));
             return true;
         } else if (statement instanceof AST.FunctionDeclaration) {
@@ -491,14 +491,14 @@ export default class Checker {
             // TODO: caught not nevering here, waiting for code coverage policy
             return false;
         } else {
-            const expr = this.checkExpr(statement, dep, fn.ty.ret);
+            const expr = this.checkExpr(statement, source, fn.ty.ret);
             fn.body.push(new IR.Drop(expr));
             return false;
         }
     }
 
-    private checkExpr(atom: AST.Atom, dep: CompDep, ty?: IR.Type): IR.Expression {
-        const virtualExpr = this.checkExprInner(atom, dep, ty);
+    private checkExpr(atom: AST.Atom, source: Source, ty?: IR.Type): IR.Expression {
+        const virtualExpr = this.checkExprInner(atom, source, ty);
         if (virtualExpr instanceof IR.VirtualInteger) {
             if (ty === undefined) {
                 this.error(atom.span, "required type annotation (inferred " + virtualExpr.ty.print() + ")");
@@ -550,7 +550,7 @@ export default class Checker {
     }
 
     // resulting expression is guaranteed to be assignable to ty
-    private checkExprInner(atom: AST.Atom, dep: CompDep, ty?: IR.VirtualType): IR.VirtualExpression {
+    private checkExprInner(atom: AST.Atom, source: Source, ty?: IR.VirtualType): IR.VirtualExpression {
         if (atom instanceof AST.Ascription) {
             if (atom.expr === null || atom.ty === null) {
                 return new IR.Unreachable(atom.span);
@@ -559,7 +559,7 @@ export default class Checker {
             if (ty === null) {
                 return new IR.Unreachable(atom.ty.span);
             }
-            return this.checkExprInner(atom.expr, dep, ty);
+            return this.checkExprInner(atom.expr, source, ty);
         }
 
         if (atom instanceof AST.Call) {
@@ -572,13 +572,13 @@ export default class Checker {
                 if (arg === null) {
                     return new IR.Unreachable(atom.span);
                 }
-                const resolved = this.checkExprInner(arg, dep);
+                const resolved = this.checkExprInner(arg, source);
                 args.push(resolved);
                 params.push(resolved.ty);
             }
             const base = this.checkExprInner(
                 atom.base,
-                dep,
+                source,
                 new IR.Exponential(atom.span, false, params, ty ?? IR.Product.void(atom.span))
             );
             if (base instanceof IR.VirtualInteger) {
@@ -599,16 +599,16 @@ export default class Checker {
                 return new IR.Unreachable(atom.span);
             }
             if (atom.kind === AST.BinOp.Id) {
-                return this.checkExprInner(atom.right, dep, ty);
+                return this.checkExprInner(atom.right, source, ty);
             }
             const name = AST.binOpToName.get(atom.kind);
             if (name === undefined) {
                 throw new Error("unclassified op");
             }
-            const args = [this.checkExprInner(atom.left, dep), this.checkExprInner(atom.right, dep)];
+            const args = [this.checkExprInner(atom.left, source), this.checkExprInner(atom.right, source)];
             const params = args.map(v => v.ty);
             const virt = new IR.Exponential(atom.span, false, params, ty ?? IR.Product.void(atom.span));
-            const res: IR.Unreachable | IR.Fn[] | null = this.findImplementation(dep.scope, name, virt);
+            const res: IR.Unreachable | IR.Fn[] | null = this.findImplementation(source.scope, name, virt);
             if (res instanceof IR.Unreachable) {
                 return new IR.Unreachable(atom.span);
             } else if (res === null) {
@@ -630,10 +630,10 @@ export default class Checker {
             if (name === undefined) {
                 throw new Error("unclassified op");
             }
-            const args = [this.checkExprInner(atom.right, dep)];
+            const args = [this.checkExprInner(atom.right, source)];
             const params = args.map(v => v.ty);
             const res: IR.Unreachable | IR.Fn[] | null = this.findImplementation(
-                dep.scope,
+                source.scope,
                 name,
                 new IR.Exponential(atom.span, false, params, ty ?? IR.Product.void(atom.span))
             );
@@ -651,9 +651,9 @@ export default class Checker {
                 return new IR.Unreachable(atom.span);
             }
         } else if (atom instanceof AST.Ident) {
-            const value = atom.span.link(dep.file.src);
+            const value = atom.span.link(source.file.code);
             if (ty instanceof IR.Exponential) {
-                const res: IR.Unreachable | IR.Fn[] | null = this.findImplementation(dep.scope, value, ty);
+                const res: IR.Unreachable | IR.Fn[] | null = this.findImplementation(source.scope, value, ty);
                 if (res instanceof IR.Unreachable) {
                     return new IR.Unreachable(atom.span);
                 } else if (res === null) {
@@ -669,7 +669,7 @@ export default class Checker {
                     return new IR.Unreachable(atom.span);
                 }
             } else {
-                const res: IR.Local | UnresolvedFunctions | IR.Unreachable | undefined = dep.scope.find(value);
+                const res: IR.Local | UnresolvedFunctions | IR.Unreachable | undefined = source.scope.find(value);
                 if (res === undefined) {
                     this.error(atom.span, "no symbol found");
                     return new IR.Unreachable(atom.span);
@@ -939,8 +939,8 @@ export default class Checker {
     }
 }
 
-export class CompDep {
-    constructor(public file: Dep, public scope: Scope, public exported: Map<string, UnresolvedSym>) {}
+export class Source {
+    constructor(public file: File, public scope: Scope, public exported: Map<string, UnresolvedSym>) {}
 }
 
 class Scope {
@@ -984,5 +984,5 @@ type ResolvedSym = IR.FunctionSum | IR.Fn | IR.Unreachable;
 type UnresolvedSym = UnresolvedFunctions;
 
 class UnresolvedFunctions {
-    constructor(public dep: CompDep, public items: Array<AST.FunctionDeclaration | IR.HostImport>) {}
+    constructor(public source: Source, public items: Array<AST.FunctionDeclaration | IR.HostImport>) {}
 }
