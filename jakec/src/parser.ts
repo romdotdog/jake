@@ -270,17 +270,23 @@ export default class Parser {
         }
     }
 
+    private let_(start: number): AST.Let | null {
+        const pattern = this.atom();
+        if (this.eat(Token.Equals)) {
+            const atom = this.atom();
+            this.eatSemi();
+            return new AST.Let(this.from(start), pattern, atom);
+        } else {
+            this.error(this.span, "`=` expected - `let` statements require initializers");
+        }
+        this.eatSemi();
+        return null;
+    }
+
     private statement(): AST.Statement | null {
         const start = this.start;
         if (this.eat(Token.Let)) {
-            const pattern = this.atom();
-            if (this.eat(Token.Equals)) {
-                const atom = this.atom();
-                return new AST.Let(this.from(start), pattern, atom);
-            } else {
-                this.error(this.span, "`=` expected - `let` statements require initializers");
-            }
-            this.eatSemi();
+            return this.let_(start);
         } else if (this.eat(Token.Return)) {
             let atom = undefined;
             if (!this.eat(Token.Semicolon)) {
@@ -535,6 +541,13 @@ export default class Parser {
                     return;
                 }
                 this.source.items.push(function_);
+            } else if (this.eat(Token.Let)) {
+                const let_ = this.let_(start);
+                if (let_ == null) {
+                    this.recoverTopLevel();
+                    return;
+                }
+                this.source.items.push(new AST.Global(this.from(start), exported, let_));
             } else {
                 this.error(this.span, "expected `function` or `type` after export");
                 this.recoverTopLevel();
@@ -608,7 +621,7 @@ const unOps = new Map([
 ]);
 
 const statementRecovery = new Set([Token.Semicolon, Token.RightBrace, Token.EOF]);
-const topLevelRecovery = new Set([Token.Import, Token.Function, Token.Type, Token.Export, Token.EOF]);
+const topLevelRecovery = new Set([Token.Import, Token.Function, Token.Let, Token.Type, Token.Export, Token.EOF]);
 enum TopLevelContext {
     Imports,
     HostImports,

@@ -40,16 +40,29 @@ export default class Checker {
 
     private exportStage(unit: File[]) {
         for (const file of unit) {
-            const scope: Map<string, UnresolvedFunctions> = new Map();
-            const exported: Map<string, UnresolvedFunctions> = new Map();
+            const scope: Map<string, UnresolvedSym> = new Map();
+            const exported: Map<string, UnresolvedSym> = new Map();
             const source = new Source(file, new Scope(undefined, scope), exported);
 
             for (const item of file.ast.items) {
                 // enumerate functions and add to scope
-                const name = item.name.link(file.code);
-                this.addImpl(scope, name, item, source);
-                if (item.exported) {
-                    this.addImpl(exported, name, item, source);
+                if (item instanceof AST.FunctionDeclaration) {
+                    const name = item.name.link(file.code);
+                    this.addImpl(scope, name, item, source);
+                    if (item.exported) {
+                        this.addImpl(exported, name, item, source);
+                    }
+                } else {
+                    const let_ = item.let_;
+                    if (let_.pattern === null) {
+                        continue;
+                    }
+                    const pattern = this.pattern(let_.pattern);
+                    if (pattern === null) {
+                        continue;
+                    }
+                    const name = pattern.untyped.ident.span.link(file.code);
+                    scope.set(name, item);
                 }
             }
 
@@ -59,14 +72,18 @@ export default class Checker {
     }
 
     private addImpl(
-        scope: Map<string, UnresolvedFunctions>,
+        scope: Map<string, UnresolvedSym>,
         name: string,
         item: AST.FunctionDeclaration | IR.HostImport,
         source: Source
     ) {
         const sym = scope.get(name);
         if (sym !== undefined) {
-            sym.items.push(item);
+            if (sym instanceof AST.Global) {
+                this.error(item.span, "global already exists by this name");
+            } else {
+                sym.items.push(item);
+            }
         } else {
             scope.set(name, new UnresolvedFunctions(source, [item]));
         }
@@ -93,7 +110,7 @@ export default class Checker {
                 for (const item of import_.with_) {
                     const originalName = item[0].link(file.code);
                     const newName = item[1].link(file.code);
-                    const sym: UnresolvedFunctions | undefined = importSource.exported.get(originalName);
+                    const sym: UnresolvedSym | undefined = importSource.exported.get(originalName);
                     if (sym) {
                         const nativeSym = scope.find(newName);
                         if (nativeSym) {
@@ -103,6 +120,8 @@ export default class Checker {
                                 scope.set(newName, new IR.Unreachable(item[1]));
                                 this.error(item[1], "cannot use this name");
                             }
+                        } else if (sym instanceof AST.Global) {
+                            scope.set(newName, sym);
                         } else {
                             scope.set(newName, new UnresolvedFunctions(source, sym.items.slice()));
                         }
@@ -195,15 +214,15 @@ export default class Checker {
         for (const source of checker.unit) {
             source.scope.push();
             for (const item of source.exported.values()) {
-                checker.resolve(item);
+                checker.resolve(item, checker.unsafeResolve);
             }
         }
     }
 
-    private resolve(sym: UnresolvedSym): ResolvedSym {
+    private resolve<U extends UnresolvedSym, R extends ResolvedSym>(sym: U, f: (this: Checker, sym: U) => R): R {
         const cached = this.symToResolvedSym.get(sym);
         if (cached) {
-            return cached;
+            return cached as R; // assuming that there is only one f per U
         }
 
         if (this.resolutionSet.has(sym)) {
@@ -211,7 +230,7 @@ export default class Checker {
         }
 
         this.addToResolutionStack(sym);
-        const local = this.unsafeResolve(sym);
+        const local = f.call(this, sym);
         this.popResolutionStack();
 
         this.symToResolvedSym.set(sym, local);
@@ -219,7 +238,30 @@ export default class Checker {
     }
 
     private unsafeResolve(sym: UnresolvedSym): ResolvedSym {
-        return this.resolveFunctions(sym);
+        if (sym instanceof AST.Global) {
+            return this.unsafeResolveGlobal(sym);
+        }
+        return this.unsafeResolveFunctions(sym);
+    }
+
+    private unsafeResolveGlobal(global: AST.Global): IR.Global | IR.Unreachable {
+        const source = this.idxToSource.get(global.span.idx);
+        if (source === undefined) {
+            throw new Error("couldn't find source");
+        }
+
+        const let_ = this.resolveLet(global.let_, source);
+        if (let_ instanceof Span) {
+            this.program.addStartStatement(let_, IR.Unreachable.drop(let_));
+            return new IR.Unreachable(let_);
+        } else {
+            const { name, mut, ty, expr } = let_;
+            const internalName = IR.labelize(`${source.file.path}/${name}_${ty.print()}`);
+            const globalIR = new IR.Global(internalName, name, mut, ty);
+            this.program.globals.push(globalIR);
+            this.program.addStartStatement(global.span, new IR.GlobalSet(globalIR, expr));
+            return globalIR;
+        }
     }
 
     private resolveIfFnDecl(fn: AST.FunctionDeclaration | IR.HostImport) {
@@ -230,7 +272,9 @@ export default class Checker {
         }
     }
 
-    private resolveFunctions(sym: UnresolvedFunctions): ResolvedSym {
+    private unsafeResolveFunctions(
+        sym: UnresolvedFunctions
+    ): IR.HostImport | IR.FunctionImpl | IR.FunctionSum | IR.Unreachable {
         if (sym.items.length == 1) {
             return this.resolveIfFnDecl(sym.items[0]);
         }
@@ -354,6 +398,12 @@ export default class Checker {
             if (this.program.exportMap.has(name)) {
                 this.error(item.span, "a function with this name is already host");
                 host = false;
+            } else if (
+                name === "_start" &&
+                !(ty.params.length == 1 && IR.Product.isVoid(ty.params[0]) && IR.Product.isVoid(ty.ret))
+            ) {
+                this.error(item.span, "_start functions must have the signature `void -> void`");
+                host = false;
             } else {
                 this.program.exportMap.add(name);
             }
@@ -388,44 +438,53 @@ export default class Checker {
         scope.pop();
     }
 
+    private resolveLet(
+        statement: AST.Let,
+        source: Source
+    ): { name: string; mut: boolean; ty: IR.WASMStackType; expr: IR.Expression } | Span {
+        if (statement.pattern === null) {
+            return statement.span;
+        }
+        const pattern = this.pattern(statement.pattern);
+        if (pattern === null) {
+            return statement.pattern.span;
+        }
+
+        const name = pattern.untyped.ident.span.link(source.file.code);
+        const mut = pattern.untyped.mut;
+        const ty = pattern.ty;
+        const isUnsupported =
+            ty instanceof IR.ExponentialSum || ty instanceof IR.Exponential || ty instanceof IR.Product;
+        const isHeapTy = ty instanceof IR.HeapTy;
+
+        if (statement.expr === null || isUnsupported || isHeapTy) {
+            if (isUnsupported) {
+                if (pattern.untyped.mut) {
+                    this.error(pattern.ty.span, "mutable locals cannot have this type");
+                } else {
+                    this.error(pattern.ty.span, "TODO: constant propagation");
+                }
+            } else if (isHeapTy) {
+                this.error(pattern.ty.span, "heap types cannot exist on the stack");
+            }
+            return { name, mut, ty: new IR.Never(statement.span), expr: new IR.Unreachable(statement.span) };
+        }
+
+        return { name, mut, ty, expr: this.checkExpr(statement.expr, source, pattern.ty) };
+    }
+
     private resolveStatement(fn: IR.FunctionImpl, statement: AST.Statement, source: Source): boolean {
         const { file, scope } = source;
         if (statement instanceof AST.Let) {
-            if (statement.pattern === null) {
-                fn.body.push(IR.Unreachable.drop(statement.span));
-                return false;
-            }
-            const pattern = this.pattern(statement.pattern);
-            if (pattern === null) {
-                fn.body.push(IR.Unreachable.drop(statement.pattern.span));
-                return false;
-            }
-
-            const name = pattern.untyped.ident.span.link(file.code);
-            const ty = pattern.ty;
-            const isUnsupported =
-                ty instanceof IR.ExponentialSum || ty instanceof IR.Exponential || ty instanceof IR.Product;
-            const isHeapTy = ty instanceof IR.HeapTy;
-
-            if (statement.expr === null || isUnsupported || isHeapTy) {
-                if (isUnsupported) {
-                    if (pattern.untyped.mut) {
-                        this.error(pattern.ty.span, "mutable locals cannot have this type");
-                    } else {
-                        this.error(pattern.ty.span, "TODO: constant propagation");
-                    }
-                } else if (isHeapTy) {
-                    this.error(pattern.ty.span, "heap types cannot exist on the stack");
-                }
-                const local = fn.addLocal(name, pattern.untyped.mut, new IR.Never(statement.span));
+            const let_ = this.resolveLet(statement, source);
+            if (let_ instanceof Span) {
+                fn.body.push(IR.Unreachable.drop(let_));
+            } else {
+                const { name, mut, ty, expr } = let_;
+                const local = fn.addLocal(name, mut, ty);
                 scope.set(name, local);
-                fn.body.push(new IR.LocalSet(local, new IR.Unreachable(statement.span)));
-                return false;
+                fn.body.push(new IR.LocalSet(local, expr));
             }
-
-            const local = fn.addLocal(name, pattern.untyped.mut, ty);
-            scope.set(name, local);
-            fn.body.push(new IR.LocalSet(local, this.checkExpr(statement.expr, source, pattern.ty)));
             return false;
         } else if (statement instanceof AST.Assign) {
             if (statement.left === null) {
@@ -448,28 +507,49 @@ export default class Checker {
                 return false;
             }
 
-            if (sym instanceof UnresolvedFunctions || !sym.mut) {
-                this.error(statement.left.span, "cannot assign to immutable variable");
-                if (sym instanceof UnresolvedFunctions) {
+            let mut = false;
+            let variable: IR.Local | IR.Global | null = null;
+            if (sym instanceof AST.Global) {
+                const resolved = this.resolve(sym, this.unsafeResolveGlobal);
+                if (resolved instanceof IR.Unreachable) {
                     return false;
                 }
+                variable = resolved;
+                mut = variable.mut;
+            } else if (sym instanceof IR.Local) {
+                variable = sym;
+                mut = variable.mut;
             }
 
-            if (statement.right === null) {
-                fn.body.push(new IR.LocalSet(sym, new IR.Unreachable(statement.span)));
+            if (!mut) {
+                this.error(statement.left.span, "cannot assign to immutable variable");
+            }
+
+            if (variable === null) {
                 return false;
             }
 
-            fn.body.push(
-                new IR.LocalSet(
-                    sym,
-                    this.checkExpr(
-                        new AST.Binary(statement.span, statement.kind, statement.left, statement.right),
-                        source,
-                        sym.ty
-                    )
-                )
+            if (statement.right === null) {
+                const expr = new IR.Unreachable(statement.span);
+                if (variable instanceof IR.Local) {
+                    fn.body.push(new IR.LocalSet(variable, expr));
+                } else {
+                    fn.body.push(new IR.GlobalSet(variable, expr));
+                }
+                return false;
+            }
+
+            const expr = this.checkExpr(
+                new AST.Binary(statement.span, statement.kind, statement.left, statement.right),
+                source,
+                variable.ty
             );
+
+            if (variable instanceof IR.Local) {
+                fn.body.push(new IR.LocalSet(variable, expr));
+            } else {
+                fn.body.push(new IR.GlobalSet(variable, expr));
+            }
             return false;
         } else if (statement instanceof AST.Return) {
             if (statement.expr === null) {
@@ -486,7 +566,7 @@ export default class Checker {
             const expr = this.checkExpr(atom, source, fn.ty.ret);
             fn.body.push(new IR.Return(expr));
             return true;
-        } else if (statement instanceof AST.FunctionDeclaration) {
+        } else if (statement instanceof AST.FunctionDeclaration || statement instanceof AST.Global) {
             this.error(statement.span, "not yet supported");
             // TODO: caught not nevering here, waiting for code coverage policy
             return false;
@@ -669,7 +749,8 @@ export default class Checker {
                     return new IR.Unreachable(atom.span);
                 }
             } else {
-                const res: IR.Local | UnresolvedFunctions | IR.Unreachable | undefined = source.scope.find(value);
+                const res: IR.Local | AST.Global | UnresolvedFunctions | IR.Unreachable | undefined =
+                    source.scope.find(value);
                 if (res === undefined) {
                     this.error(atom.span, "no symbol found");
                     return new IR.Unreachable(atom.span);
@@ -684,6 +765,21 @@ export default class Checker {
                         return new IR.Unreachable(atom.span);
                     } else {
                         return new IR.LocalRef(atom.span, res, res.ty);
+                    }
+                } else if (res instanceof AST.Global) {
+                    // TODO: merge
+                    const resolved = this.unsafeResolveGlobal(res);
+                    if (resolved instanceof IR.Unreachable) {
+                        return new IR.Unreachable(atom.span);
+                    }
+                    if (ty !== undefined) {
+                        if (IR.Product.isVoid(ty)) {
+                            return IR.ProductCtr.void(atom.span, ty.span);
+                        }
+                        this.error(atom.span, "type mismatch (local doesn't match with context)");
+                        return new IR.Unreachable(atom.span);
+                    } else {
+                        return new IR.GlobalRef(atom.span, resolved, resolved.ty);
                     }
                 } else {
                     this.error(atom.span, "type mismatch (functions in local context)");
@@ -727,10 +823,13 @@ export default class Checker {
     }
 
     private findImplementation(scope: Scope, name: string, ty: IR.VirtualExponential): IR.Fn[] | IR.Unreachable | null {
-        const sym: UnresolvedFunctions | IR.Unreachable | IR.Local | undefined = scope.getSameScope(name);
+        const sym: UnresolvedFunctions | AST.Global | IR.Unreachable | IR.Local | undefined = scope.getSameScope(name);
         if (sym !== undefined) {
             if (sym instanceof UnresolvedFunctions) {
-                const resolvedSym: IR.FunctionSum | IR.Fn | IR.Unreachable = this.resolve(sym);
+                const resolvedSym: IR.FunctionSum | IR.Fn | IR.Unreachable = this.resolve(
+                    sym,
+                    this.unsafeResolveFunctions
+                );
                 if (resolvedSym instanceof IR.FunctionSum) {
                     const impls = [];
                     for (const fn of resolvedSym.impls) {
@@ -979,9 +1078,9 @@ class Scope {
     }
 }
 
-type Sym = IR.Local | UnresolvedFunctions | IR.Unreachable;
-type ResolvedSym = IR.FunctionSum | IR.Fn | IR.Unreachable;
-type UnresolvedSym = UnresolvedFunctions;
+type Sym = IR.Local | UnresolvedSym | IR.Unreachable;
+type ResolvedSym = IR.Global | IR.FunctionSum | IR.Fn | IR.Unreachable;
+type UnresolvedSym = AST.Global | UnresolvedFunctions;
 
 class UnresolvedFunctions {
     constructor(public source: Source, public items: Array<AST.FunctionDeclaration | IR.HostImport>) {}

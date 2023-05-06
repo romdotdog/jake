@@ -130,7 +130,11 @@ export class Never {
     constructor(public span: Span) {}
 }
 
-export type Item = FunctionDeclaration;
+export class Global {
+    constructor(public span: Span, public exported: boolean, public let_: Let) {}
+}
+
+export type Item = FunctionDeclaration | Global;
 
 export class FunctionSignature {
     constructor(

@@ -2,8 +2,27 @@ import * as AST from "./ast.js";
 import { Span } from "./lexer.js";
 
 export class Program {
+    public globals: Global[] = [];
     public contents: Fn[] = [];
+    public _start: FunctionImpl | null = null;
     public exportMap: Set<string> = new Set();
+
+    // TODO: maybe add a Span.None or something?
+    public addStartStatement(span: Span, stmt: Statement) {
+        if (this._start === null) {
+            this._start = new FunctionImpl(
+                "_start",
+                "_start",
+                true,
+                new Exponential<WASMResultType>(span, false, [Product.void(span)], Product.void(span)),
+                [],
+                [],
+                [stmt]
+            );
+            return;
+        }
+        this._start.body.push(stmt);
+    }
 }
 
 export type Fn = HostImport | FunctionImpl;
@@ -44,6 +63,10 @@ export class FunctionSum {
 export type WASMStackType = StackTy | Never;
 export type WASMResultType = WASMStackType | Void;
 
+export class Global {
+    constructor(public internalName: string, public name: string, public mut: boolean, public ty: WASMStackType) {}
+}
+
 export class Local {
     public internalName: string;
     constructor(public idx: number, public name: string, public mut: boolean, public ty: WASMStackType) {
@@ -51,10 +74,14 @@ export class Local {
     }
 }
 
-export type Statement = LocalSet | Return | Drop;
+export type Statement = LocalSet | GlobalSet | Return | Drop;
 
 export class LocalSet {
     constructor(public local: Local, public expr: Expression) {}
+}
+
+export class GlobalSet {
+    constructor(public global: Global, public expr: Expression) {}
 }
 
 export class Return {
@@ -65,7 +92,7 @@ export class Drop {
     constructor(public expr: Expression) {}
 }
 
-export type Expression = Unreachable | LocalRef | Call | Integer | Float | ProductCtr;
+export type Expression = Unreachable | LocalRef | GlobalRef | Call | Integer | Float | ProductCtr;
 export type VirtualExpression = Expression | VirtualInteger | Fn;
 
 export class Unreachable {
@@ -81,6 +108,10 @@ export class Unreachable {
 
 export class LocalRef {
     constructor(public span: Span, public local: Local, public ty: WASMStackType) {}
+}
+
+export class GlobalRef {
+    constructor(public span: Span, public global: Global, public ty: WASMStackType) {}
 }
 
 export class Call {
