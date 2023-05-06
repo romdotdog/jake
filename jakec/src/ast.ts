@@ -131,7 +131,7 @@ export class Never {
 }
 
 export class Global {
-    constructor(public span: Span, public exported: boolean, public let_: Let) {}
+    constructor(public span: Span, public exported: boolean, public host: boolean, public let_: Let) {}
 }
 
 export type Item = FunctionDeclaration | Global;

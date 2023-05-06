@@ -547,7 +547,7 @@ export default class Parser {
                     this.recoverTopLevel();
                     return;
                 }
-                this.source.items.push(new AST.Global(this.from(start), exported, let_));
+                this.source.items.push(new AST.Global(this.from(start), exported, host, let_));
             } else {
                 this.error(this.span, "expected `function` or `type` after export");
                 this.recoverTopLevel();

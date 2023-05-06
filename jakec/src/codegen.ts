@@ -33,6 +33,9 @@ export class CodeGen {
         for (const global of program.globals) {
             const ty = codegen.localType(global.ty);
             codegen.module.addGlobal(global.internalName, ty, true, codegen.zero(ty));
+            if (global.host) {
+                codegen.module.addGlobalExport(global.internalName, global.name);
+            }
         }
 
         for (const fn of program.contents) {
@@ -55,6 +58,7 @@ export class CodeGen {
             }
         }
         //codegen.module.optimize();
+        codegen.module.setFeatures(binaryen.Features.MutableGlobals);
         codegen.module.validate();
         //if (!) throw new Error("validation error");
         return codegen.module.emitText();

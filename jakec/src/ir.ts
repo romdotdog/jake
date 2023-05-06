@@ -64,7 +64,13 @@ export type WASMStackType = StackTy | Never;
 export type WASMResultType = WASMStackType | Void;
 
 export class Global {
-    constructor(public internalName: string, public name: string, public mut: boolean, public ty: WASMStackType) {}
+    constructor(
+        public internalName: string,
+        public name: string,
+        public host: boolean,
+        public mut: boolean,
+        public ty: WASMStackType
+    ) {}
 }
 
 export class Local {

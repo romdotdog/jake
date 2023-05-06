@@ -256,8 +256,18 @@ export default class Checker {
             return new IR.Unreachable(let_);
         } else {
             const { name, mut, ty, expr } = let_;
+            let host = global.host;
+            if (host) {
+                if (this.program.exportMap.has(name)) {
+                    this.error(global.span, "an item with this name is already host");
+                    host = false;
+                } else {
+                    this.program.exportMap.add(name);
+                }
+            }
+
             const internalName = IR.labelize(`${source.file.path}/${name}_${ty.print()}`);
-            const globalIR = new IR.Global(internalName, name, mut, ty);
+            const globalIR = new IR.Global(internalName, name, host, mut, ty);
             this.program.globals.push(globalIR);
             this.program.addStartStatement(global.span, new IR.GlobalSet(globalIR, expr));
             return globalIR;
@@ -396,7 +406,7 @@ export default class Checker {
         let host = item.host;
         if (host) {
             if (this.program.exportMap.has(name)) {
-                this.error(item.span, "a function with this name is already host");
+                this.error(item.span, "an item with this name is already host");
                 host = false;
             } else if (
                 name === "_start" &&

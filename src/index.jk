@@ -3,7 +3,7 @@ import host "jake/report" as report: u64 -> [];
 
 // fn: impls = [u32 -> u32]
 
-let global: u64 = 4294967296;
+host let global: u64 = 4294967296;
 
 export host function _start(): [] {
     report(fn(global));
