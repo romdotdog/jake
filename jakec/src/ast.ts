@@ -36,6 +36,7 @@ export type Atom =
     | Mut
     | Pure
     | Ascription
+    | Field
     | Binary
     | Unary
     | Call
@@ -44,9 +45,7 @@ export type Atom =
     | NumberLiteral
     | IntegerLiteral
     | StringLiteral
-    | Ident
-    | HeapTy
-    | StackTy;
+    | Ident;
 
 export class Mut {
     constructor(public span: Span, public expr: Atom | null) {}
@@ -58,6 +57,10 @@ export class Pure {
 
 export class Ascription {
     constructor(public span: Span, public expr: Atom | null, public ty: Atom | null) {}
+}
+
+export class Field {
+    constructor(public span: Span, public expr: Atom | null, public ident: Ident) {}
 }
 
 export class Binary {
@@ -101,31 +104,6 @@ export class Ident {
     constructor(public span: Span) {}
 }
 
-export class HeapTy {
-    constructor(public span: Span, public value: HeapTyEnum) {}
-}
-
-// prettier-ignore
-export enum HeapTyEnum {
-    I8  = 0b000000000000000011,
-    U8  = 0b000000000000000101,
-    I16 = 0b000000000000011111,
-    U16 = 0b000000000000101101
-}
-
-export class StackTy {
-    constructor(public span: Span, public value: StackTyEnum) {}
-}
-
-export enum StackTyEnum {
-    F32 = 0b000000000111111111,
-    I32 = 0b000000011011111111,
-    U32 = 0b000000101001101101,
-    F64 = 0b000111111111111111,
-    I64 = 0b011011111011111111,
-    U64 = 0b101001101001101101
-}
-
 export class Never {
     constructor(public span: Span) {}
 }
@@ -148,7 +126,12 @@ export class FunctionSignature {
 }
 
 export class FunctionDeclaration {
-    constructor(public span: Span, public fullSpan: Span, public sig: FunctionSignature, public body: Statement[]) {}
+    constructor(
+        public span: Span,
+        public fullSpan: Span,
+        public sig: FunctionSignature,
+        public body: Statement[] | Atom | null
+    ) {}
 
     get name(): Span {
         return this.sig.name;

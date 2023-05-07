@@ -1,4 +1,5 @@
 import * as AST from "./ast.js";
+import * as INT from "./intrinsics.js";
 import { Span } from "./lexer.js";
 
 export class Program {
@@ -8,13 +9,13 @@ export class Program {
     public exportMap: Set<string> = new Set();
 
     // TODO: maybe add a Span.None or something?
-    public addStartStatement(span: Span, stmt: Statement) {
+    public addStartStatement(stmt: Statement) {
         if (this._start === null) {
             this._start = new FunctionImpl(
                 "_start",
                 "_start",
                 true,
-                new Exponential<WASMResultType>(span, false, [Product.void(span)], Product.void(span)),
+                new Exponential<WASMResultType>(Span.None, false, [Product.void(Span.None)], Product.void(Span.None)),
                 [],
                 [],
                 [stmt]
@@ -98,7 +99,7 @@ export class Drop {
     constructor(public expr: Expression) {}
 }
 
-export type Expression = Unreachable | LocalRef | GlobalRef | Call | Integer | Float | ProductCtr;
+export type Expression = Unreachable | LocalRef | GlobalRef | Call | IntrinsicCall | Integer | Float | ProductCtr;
 export type VirtualExpression = Expression | VirtualInteger | Fn;
 
 export class Unreachable {
@@ -124,6 +125,10 @@ export class Call {
     constructor(public span: Span, public fn: Fn, public args: Expression[], public ty: Type) {}
 }
 
+export class IntrinsicCall {
+    constructor(public span: Span, public intrinsic: INT.Intrinsic, public args: Expression[], public ty: Type) {}
+}
+
 export class ProductCtr {
     constructor(public span: Span, public values: Expression[], public ty: Product) {}
 
@@ -132,16 +137,32 @@ export class ProductCtr {
     }
 }
 
+// prettier-ignore
+export enum HeapTyEnum {
+    I8  = 0b000000000000000011,
+    U8  = 0b000000000000000101,
+    I16 = 0b000000000000011111,
+    U16 = 0b000000000000101101
+}
+
+export enum StackTyEnum {
+    F32 = 0b000000000111111111,
+    I32 = 0b000000011011111111,
+    U32 = 0b000000101001101101,
+    F64 = 0b000111111111111111,
+    I64 = 0b011011111011111111,
+    U64 = 0b101001101001101101
+}
+
 type IntegerStackTy = StackTy & {
-    value: AST.StackTyEnum.I32 | AST.StackTyEnum.U32 | AST.StackTyEnum.I64 | AST.StackTyEnum.U64;
+    value: StackTyEnum.I32 | StackTyEnum.U32 | StackTyEnum.I64 | StackTyEnum.U64;
 };
 
 export type IntegerTy = IntegerStackTy | HeapTy;
 
 export function isIntegerTy(ty: unknown): ty is IntegerTy {
     return (
-        ty instanceof HeapTy ||
-        (ty instanceof StackTy && ty.value !== AST.StackTyEnum.F32 && ty.value !== AST.StackTyEnum.F64)
+        ty instanceof HeapTy || (ty instanceof StackTy && ty.value !== StackTyEnum.F32 && ty.value !== StackTyEnum.F64)
     );
 }
 
@@ -158,39 +179,39 @@ export class VirtualInteger {
             if (value < 2n ** 7n) {
                 ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U7);
             } else if (value < 2n ** 8n) {
-                ty = new HeapTy(span, AST.HeapTyEnum.U8);
+                ty = new HeapTy(span, HeapTyEnum.U8);
             } else if (value < 2n ** 15n) {
                 ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U15);
             } else if (value < 2n ** 16n) {
-                ty = new HeapTy(span, AST.HeapTyEnum.U16);
+                ty = new HeapTy(span, HeapTyEnum.U16);
             } else if (value < 2n ** 24n) {
                 ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U24);
             } else if (value < 2n ** 31n) {
                 ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U31);
             } else if (value < 2n ** 32n) {
-                ty = new StackTy(span, AST.StackTyEnum.U32);
+                ty = new StackTy(span, StackTyEnum.U32);
             } else if (value < 2n ** 53n) {
                 ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U53);
             } else if (value < 2n ** 63n) {
                 ty = new VirtualIntegerTy(VirtualIntegerTyEnum.U63);
             } else if (value < 2n ** 64n) {
-                ty = new StackTy(span, AST.StackTyEnum.U64);
+                ty = new StackTy(span, StackTyEnum.U64);
             } else {
                 return null;
             }
         } else {
             if (value >= -(2n ** 7n)) {
-                ty = new HeapTy(span, AST.HeapTyEnum.I8);
+                ty = new HeapTy(span, HeapTyEnum.I8);
             } else if (value >= -(2n ** 15n)) {
-                ty = new HeapTy(span, AST.HeapTyEnum.I16);
+                ty = new HeapTy(span, HeapTyEnum.I16);
             } else if (value >= -(2n ** 24n)) {
                 ty = new VirtualIntegerTy(VirtualIntegerTyEnum.I25);
             } else if (value >= -(2n ** 31n)) {
-                ty = new StackTy(span, AST.StackTyEnum.I32);
+                ty = new StackTy(span, StackTyEnum.I32);
             } else if (value >= -(2n ** 53n)) {
                 ty = new VirtualIntegerTy(VirtualIntegerTyEnum.I54);
             } else if (value >= -(2n ** 63n)) {
-                ty = new StackTy(span, AST.StackTyEnum.I64);
+                ty = new StackTy(span, StackTyEnum.I64);
             } else {
                 return null;
             }
@@ -199,10 +220,10 @@ export class VirtualInteger {
     }
 }
 
-export type FloatTy = StackTy & { value: AST.StackTyEnum.F32 | AST.StackTyEnum.F64 };
+export type FloatTy = StackTy & { value: StackTyEnum.F32 | StackTyEnum.F64 };
 
 export function isFloatTy(ty: unknown): ty is FloatTy {
-    return ty instanceof StackTy && (ty.value === AST.StackTyEnum.F32 || ty.value === AST.StackTyEnum.F64);
+    return ty instanceof StackTy && (ty.value === StackTyEnum.F32 || ty.value === StackTyEnum.F64);
 }
 
 export class Float {
@@ -240,7 +261,7 @@ export class Exponential<Param extends TypeInterface = Type, Result extends Type
         }
         if (other instanceof Exponential) {
             return (
-                this.pure == other.pure &&
+                (this.pure || !other.pure) &&
                 this.params.length == other.params.length &&
                 other.ret.assignableTo(this.ret) && // notice
                 this.params.every((v, i) => v.assignableTo(other.params[i]))
@@ -339,7 +360,7 @@ export class Product {
 }
 
 export class StackTy {
-    constructor(public span: Span, public value: AST.StackTyEnum) {}
+    constructor(public span: Span, public value: StackTyEnum) {}
 
     public equals(other: VirtualType) {
         if (other instanceof StackTy) {
@@ -357,24 +378,24 @@ export class StackTy {
 
     public print(): string {
         switch (this.value) {
-            case AST.StackTyEnum.I32:
+            case StackTyEnum.I32:
                 return "i32";
-            case AST.StackTyEnum.U32:
+            case StackTyEnum.U32:
                 return "u32";
-            case AST.StackTyEnum.F32:
+            case StackTyEnum.F32:
                 return "f32";
-            case AST.StackTyEnum.I64:
+            case StackTyEnum.I64:
                 return "i64";
-            case AST.StackTyEnum.U64:
+            case StackTyEnum.U64:
                 return "u64";
-            case AST.StackTyEnum.F64:
+            case StackTyEnum.F64:
                 return "f64";
         }
     }
 }
 
 export class HeapTy {
-    constructor(public span: Span, public value: AST.HeapTyEnum) {}
+    constructor(public span: Span, public value: HeapTyEnum) {}
 
     public equals(other: VirtualType) {
         if (other instanceof HeapTy) {
@@ -392,13 +413,13 @@ export class HeapTy {
 
     public print(): string {
         switch (this.value) {
-            case AST.HeapTyEnum.I8:
+            case HeapTyEnum.I8:
                 return "i8";
-            case AST.HeapTyEnum.U8:
+            case HeapTyEnum.U8:
                 return "u8";
-            case AST.HeapTyEnum.I16:
+            case HeapTyEnum.I16:
                 return "i16";
-            case AST.HeapTyEnum.U16:
+            case HeapTyEnum.U16:
                 return "u16";
         }
     }

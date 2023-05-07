@@ -1,5 +1,6 @@
 import { File } from ".";
 import * as AST from "./ast.js";
+import * as INT from "./intrinsics.js";
 import * as IR from "./ir.js";
 import { Span } from "./lexer.js";
 import System, { DiagnosticSeverity } from "./system.js";
@@ -26,6 +27,7 @@ export default class Checker {
     private resolutionSet: Set<UnresolvedSym> = new Set();
 
     private error(span: Span, message: string) {
+        span.assert();
         const file = this.files[span.idx];
         this.system.error(
             {
@@ -57,7 +59,7 @@ export default class Checker {
                     if (let_.pattern === null) {
                         continue;
                     }
-                    const pattern = this.pattern(let_.pattern);
+                    const pattern = this.pattern(let_.pattern, file);
                     if (pattern === null) {
                         continue;
                     }
@@ -137,7 +139,7 @@ export default class Checker {
                 const functionName = pathComponents[last];
                 const moduleName = pathComponents.slice(0, last).join("/");
                 const name = hostImport.name.link(file.code);
-                const ty = this.resolveHostImportTy(hostImport);
+                const ty = this.resolveHostImportTy(hostImport, file);
                 if (ty === null) {
                     scope.set(name, new IR.Unreachable(hostImport.span));
                     continue;
@@ -166,7 +168,7 @@ export default class Checker {
         }
     }
 
-    private resolveHostImportTy(hostImport: AST.HostImport) {
+    private resolveHostImportTy(hostImport: AST.HostImport, file: File) {
         if (hostImport.ty !== null) {
             if (hostImport.ty instanceof AST.Binary && isExponential(hostImport.ty)) {
                 return this.exponentialWithFilter(
@@ -184,7 +186,8 @@ export default class Checker {
                         }
                         this.error(hostImport.span, "not allowed");
                         return false;
-                    }
+                    },
+                    file
                 );
             } else {
                 this.error(hostImport.span, "type of host import must be exponential");
@@ -252,7 +255,7 @@ export default class Checker {
 
         const let_ = this.resolveLet(global.let_, source);
         if (let_ instanceof Span) {
-            this.program.addStartStatement(let_, IR.Unreachable.drop(let_));
+            this.program.addStartStatement(IR.Unreachable.drop(let_));
             return new IR.Unreachable(let_);
         } else {
             const { name, mut, ty, expr } = let_;
@@ -269,7 +272,7 @@ export default class Checker {
             const internalName = IR.labelize(`${source.file.path}/${name}_${ty.print()}`);
             const globalIR = new IR.Global(internalName, name, host, mut, ty);
             this.program.globals.push(globalIR);
-            this.program.addStartStatement(global.span, new IR.GlobalSet(globalIR, expr));
+            this.program.addStartStatement(new IR.GlobalSet(globalIR, expr));
             return globalIR;
         }
     }
@@ -333,7 +336,7 @@ export default class Checker {
             if (param === null) {
                 return new IR.Unreachable(item.span);
             }
-            const pattern = this.pattern(param);
+            const pattern = this.pattern(param, source.file);
             if (pattern === null) {
                 return new IR.Unreachable(param.span);
             }
@@ -366,7 +369,7 @@ export default class Checker {
             case null:
                 return new IR.Unreachable(item.span);
             default: {
-                const resolvedTy = this.ty(returnTyAtom);
+                const resolvedTy = this.ty(returnTyAtom, source.file);
                 if (resolvedTy === null) {
                     return new IR.Unreachable(item.span);
                 }
@@ -421,7 +424,39 @@ export default class Checker {
 
         const internalName = IR.labelize(`${source.file.path}/${name}_${ty.print()}`);
         const fn = new IR.FunctionImpl(internalName, name, host, ty, params, [], []);
-        this.resolveBody(fn, item.body, source);
+        let success = false;
+        if (item.body !== null) {
+            if (Array.isArray(item.body)) {
+                this.resolveBody(fn, item.body, source);
+                success = true;
+            } else {
+                const intrinsic = this.resolveIntrinsic(item.body, source.file);
+
+                if (intrinsic instanceof INT.Namespace) {
+                    this.error(item.body.span, "expected intrinsic, got namespace");
+                } else if (intrinsic instanceof INT.Intrinsic) {
+                    if (intrinsic.sig.assignableTo(ty)) {
+                        success = true;
+                        fn.body.push(
+                            new IR.Return(
+                                new IR.IntrinsicCall(
+                                    item.span,
+                                    intrinsic,
+                                    params.map(p => new IR.LocalRef(item.span, p, p.ty)),
+                                    ty.ret
+                                )
+                            )
+                        );
+                    } else {
+                        this.error(item.body.span, "signature is not assignable to intrinsic");
+                    }
+                }
+            }
+        }
+
+        if (!success) {
+            fn.body.push(new IR.Return(new IR.Unreachable(item.span)));
+        }
 
         this.declToFunction.set(item, fn);
         this.program.contents.push(fn);
@@ -455,7 +490,7 @@ export default class Checker {
         if (statement.pattern === null) {
             return statement.span;
         }
-        const pattern = this.pattern(statement.pattern);
+        const pattern = this.pattern(statement.pattern, source.file);
         if (pattern === null) {
             return statement.pattern.span;
         }
@@ -587,6 +622,37 @@ export default class Checker {
         }
     }
 
+    private resolveIntrinsic(atom: AST.Atom, file: File): INT.Namespace | INT.Intrinsic | null {
+        let base: INT.Namespace | INT.Intrinsic | null;
+        let index: string;
+        if (atom instanceof AST.Ident) {
+            base = INT.root;
+            index = atom.span.link(file.code);
+        } else if (atom instanceof AST.Field) {
+            if (atom.expr === null) {
+                return null;
+            }
+            base = this.resolveIntrinsic(atom.expr, file);
+            index = atom.ident.span.link(file.code);
+        } else {
+            this.error(atom.span, "invalid path to intrinsic");
+            return null;
+        }
+        if (base instanceof INT.Namespace) {
+            const res = base.contents.get(index);
+            if (res === undefined) {
+                this.error(atom.span, "field does not exist");
+                return null;
+            } else {
+                return res;
+            }
+        } else if (base instanceof INT.Intrinsic) {
+            this.error(atom.span, "attempt to index intrinsic");
+            return null;
+        }
+        return null;
+    }
+
     private checkExpr(atom: AST.Atom, source: Source, ty?: IR.Type): IR.Expression {
         const virtualExpr = this.checkExprInner(atom, source, ty);
         if (virtualExpr instanceof IR.VirtualInteger) {
@@ -645,7 +711,7 @@ export default class Checker {
             if (atom.expr === null || atom.ty === null) {
                 return new IR.Unreachable(atom.span);
             }
-            const ty = this.ty(atom.ty);
+            const ty = this.ty(atom.ty, source.file);
             if (ty === null) {
                 return new IR.Unreachable(atom.ty.span);
             }
@@ -817,15 +883,15 @@ export default class Checker {
                 return new IR.Unreachable(atom.span);
             }
             return new IR.Float(atom.span, atom.value, ty);
-        } else if (
-            atom instanceof AST.Mut ||
-            atom instanceof AST.Pure ||
-            atom instanceof AST.HeapTy ||
-            atom instanceof AST.StackTy
-        ) {
+        } else if (atom instanceof AST.Mut || atom instanceof AST.Pure) {
             this.error(atom.span, "invalid expression");
             return new IR.Unreachable(atom.span);
-        } else if (atom instanceof AST.TypeCall || atom instanceof AST.Product || atom instanceof AST.StringLiteral) {
+        } else if (
+            atom instanceof AST.TypeCall ||
+            atom instanceof AST.Product ||
+            atom instanceof AST.StringLiteral ||
+            atom instanceof AST.Field
+        ) {
             this.error(atom.span, "not yet supported");
             return new IR.Unreachable(atom.span);
         }
@@ -866,7 +932,7 @@ export default class Checker {
         return scope.parent ? this.findImplementation(scope.parent, name, ty) : [];
     }
 
-    private pattern(atom: AST.Atom): IR.Pattern | null {
+    private pattern(atom: AST.Atom, file: File): IR.Pattern | null {
         const span = atom.span;
         let mut = false;
         if (atom instanceof AST.Mut) {
@@ -880,7 +946,7 @@ export default class Checker {
         let ty: IR.Type | undefined = undefined;
         if (atom instanceof AST.Ascription) {
             if (atom.ty !== null) {
-                const resolvedTy = this.ty(atom.ty);
+                const resolvedTy = this.ty(atom.ty, file);
                 if (resolvedTy !== null) {
                     ty = resolvedTy;
                 }
@@ -903,12 +969,12 @@ export default class Checker {
         }
     }
 
-    private ty(atom: AST.Atom, prohibitNever = false): IR.Type | null {
+    private ty(atom: AST.Atom, file: File, prohibitNever = false): IR.Type | null {
         if (atom instanceof AST.Binary) {
             if (isExponential(atom)) {
-                return this.exponential(atom);
+                return this.exponential(atom, file);
             } else if (isSum(atom)) {
-                return this.sum(atom);
+                return this.sum(atom, file);
             }
         }
 
@@ -918,7 +984,7 @@ export default class Checker {
                 if (field === null) {
                     return null;
                 }
-                const ty = this.ty(field);
+                const ty = this.ty(field, file);
                 if (ty === null) {
                     return null;
                 } else {
@@ -928,12 +994,16 @@ export default class Checker {
             return new IR.Product(atom.span, fields);
         }
 
-        if (atom instanceof AST.StackTy) {
-            return new IR.StackTy(atom.span, atom.value);
-        }
-
-        if (atom instanceof AST.HeapTy) {
-            return new IR.HeapTy(atom.span, atom.value);
+        if (atom instanceof AST.Ident) {
+            const text = atom.span.link(file.code);
+            const maybeStackTy = stackTy.get(text);
+            if (maybeStackTy !== undefined) {
+                return new IR.StackTy(atom.span, maybeStackTy);
+            }
+            const maybeHeapTy = heapTy.get(text);
+            if (maybeHeapTy !== undefined) {
+                return new IR.HeapTy(atom.span, maybeHeapTy);
+            }
         }
 
         if (atom instanceof AST.Never) {
@@ -950,13 +1020,14 @@ export default class Checker {
     private exponentialWithFilter<Param extends IR.Type, Result extends IR.Type>(
         atom: AST.Binary & { kind: AST.BinOp.Arrow },
         paramFilter: (x: IR.Type) => x is Param,
-        resultFilter: (x: IR.Type) => x is Result
+        resultFilter: (x: IR.Type) => x is Result,
+        file: File
     ): IR.Exponential<Param, Result> | null {
         // right associative
         if (atom.right === null) {
             return null;
         }
-        const ret = this.ty(atom.right);
+        const ret = this.ty(atom.right, file);
         if (ret === null || !resultFilter(ret)) {
             return null;
         }
@@ -976,7 +1047,7 @@ export default class Checker {
                 return null;
             }
 
-            const ty = this.ty(possibleExp);
+            const ty = this.ty(possibleExp, file);
             if (ty === null || !paramFilter(ty)) {
                 return null;
             }
@@ -985,17 +1056,17 @@ export default class Checker {
         return new IR.Exponential(atom.span, false, params, ret);
     }
 
-    private exponential(atom: AST.Binary & { kind: AST.BinOp.Arrow }): IR.Exponential | null {
-        return this.exponentialWithFilter(atom, identityGuard, identityGuard);
+    private exponential(atom: AST.Binary & { kind: AST.BinOp.Arrow }, file: File): IR.Exponential | null {
+        return this.exponentialWithFilter(atom, identityGuard, identityGuard, file);
     }
 
-    private sum(atom: AST.Binary & { kind: AST.BinOp.Or }): IR.ExponentialSum | null {
+    private sum(atom: AST.Binary & { kind: AST.BinOp.Or }, file: File): IR.ExponentialSum | null {
         if (!(atom.left instanceof AST.Binary) || !isExponential(atom.left)) {
             this.error(atom.span, "sum types not yet supported");
             return null;
         }
 
-        const initialTy = this.exponential(atom.left);
+        const initialTy = this.exponential(atom.left, file);
         if (initialTy === null) {
             return null;
         }
@@ -1018,7 +1089,7 @@ export default class Checker {
                 this.error(possibleExp.span, "cannot mix sum exponential types and sum types; use parentheses");
                 return null;
             }
-            const newExp = this.exponential(possibleExp);
+            const newExp = this.exponential(possibleExp, file);
             if (newExp === null) {
                 return null;
             }
@@ -1095,3 +1166,19 @@ type UnresolvedSym = AST.Global | UnresolvedFunctions;
 class UnresolvedFunctions {
     constructor(public source: Source, public items: Array<AST.FunctionDeclaration | IR.HostImport>) {}
 }
+
+const heapTy = new Map([
+    ["i8", IR.HeapTyEnum.I8],
+    ["u8", IR.HeapTyEnum.U8],
+    ["i16", IR.HeapTyEnum.I16],
+    ["u16", IR.HeapTyEnum.U16]
+]);
+
+const stackTy = new Map([
+    ["i32", IR.StackTyEnum.I32],
+    ["u32", IR.StackTyEnum.U32],
+    ["f32", IR.StackTyEnum.F32],
+    ["i64", IR.StackTyEnum.I64],
+    ["u64", IR.StackTyEnum.U64],
+    ["f64", IR.StackTyEnum.F64]
+]);

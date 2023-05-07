@@ -163,10 +163,7 @@ export default class Lexer {
                 case "<": {
                     const current = this.get();
                     if (current == "<") {
-                        return this.maybeTakeEquals(
-                            Token.LeftAngleLeftAngle,
-                            Token.LeftAngleLeftAngleEquals
-                        );
+                        return this.maybeTakeEquals(Token.LeftAngleLeftAngle, Token.LeftAngleLeftAngleEquals);
                     } else if (current == "=") {
                         this.skip();
                         return Token.LeftAngleEquals;
@@ -177,10 +174,7 @@ export default class Lexer {
                 case ">": {
                     const current = this.get();
                     if (current == ">") {
-                        return this.maybeTakeEquals(
-                            Token.RightAngleRightAngle,
-                            Token.RightAngleRightAngleEquals
-                        );
+                        return this.maybeTakeEquals(Token.RightAngleRightAngle, Token.RightAngleRightAngleEquals);
                     } else if (current == "=") {
                         this.skip();
                         return Token.RightAngleEquals;
@@ -372,6 +366,7 @@ export enum Token {
     Loop,
     Type,
     If,
+    From,
     Let,
     Else,
     Mut,
@@ -431,9 +426,20 @@ export enum Token {
 }
 
 export class Span {
+    static None = new Span(-1, 1, 0);
     constructor(public idx: number, public start: number, public end: number) {}
-    link(src: string) {
+    public link(src: string) {
         return src.substring(this.start, this.end);
+    }
+
+    public isNone(): boolean {
+        return this.idx < 0 || this.start > this.end;
+    }
+
+    public assert() {
+        if (this.isNone()) {
+            throw new Error();
+        }
     }
 }
 
@@ -447,6 +453,7 @@ const keywords = new Map([
     ["loop", Token.Loop],
     ["type", Token.Type],
     ["if", Token.If],
+    ["from", Token.From],
     ["let", Token.Let],
     ["else", Token.Else],
     ["never", Token.Never],

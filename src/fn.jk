@@ -1,14 +1,14 @@
 import "index.jk";
 
-export function add(x: u32, y: u32): u32 {}
-export function add(x: u64, y: u64): u64 {}
+export function add(x: i32, y: i32): i32 from i32.add;
+export function add(x: i64, y: i64): i64 from i64.add;
 
-export function fn(n: u32): u32 {
+export function fn(n: i32): i32 {
     return n + 1;
 }
 
-export function fn(n: u64): u64 {
+export function fn(n: i64): i64 {
     return n + 2;
 }
 
-// fn: impls = [u32 -> u32, u64 -> u64]
+// fn: impls = [i32 -> i32, i64 -> i64]

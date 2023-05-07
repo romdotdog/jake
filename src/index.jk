@@ -1,9 +1,9 @@
 import "fn.jk" with { fn };
-import host "jake/report" as report: u64 -> [];
+import host "jake/report" as report: i32 -> [];
 
-// fn: impls = [u32 -> u32]
+// fn: impls = [i32 -> i32]
 
-host let global: u64 = 4294967296;
+host let global: i32 = 2147483647;
 
 export host function _start(): [] {
     report(fn(global));

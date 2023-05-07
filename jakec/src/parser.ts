@@ -13,6 +13,7 @@ export default class Parser {
 
     private error(span: Span, message: string, important = false) {
         if (!(important || this.quiet)) {
+            span.assert();
             this.system.error(
                 {
                     path: this.path,
@@ -108,14 +109,6 @@ export default class Parser {
 
     private literal(): AST.Atom | null {
         if (this.eat(Token.Ident)) {
-            const maybeStackTy = stackTy.get(<string>this.buffer);
-            if (maybeStackTy !== undefined) {
-                return new AST.StackTy(this.span, maybeStackTy);
-            }
-            const maybeHeapTy = heapTy.get(<string>this.buffer);
-            if (maybeHeapTy !== undefined) {
-                return new AST.HeapTy(this.span, maybeHeapTy);
-            }
             return new AST.Ident(this.span);
         } else if (this.eat(Token.Number)) {
             if (typeof this.buffer == "number") {
@@ -160,7 +153,13 @@ export default class Parser {
             return this.simpleAtom(new AST.Call(this.from(start), base, null, array));
         } else if (this.eat(Token.Colon)) {
             const ty = this.atom();
-            return new AST.Ascription(this.from(start), base, ty);
+            return this.simpleAtom(new AST.Ascription(this.from(start), base, ty));
+        } else if (this.eat(Token.Period)) {
+            if (!this.eat(Token.Ident)) {
+                this.error(this.span, "expected identifier after period");
+                return null;
+            }
+            return this.simpleAtom(new AST.Field(this.from(start), base, new AST.Ident(this.span)));
         } else if (this.lookahead == Token.LeftAngle) {
             // Here be dragons 🐉
             type Speculation = [tyArray: AST.Atom[], args: AST.Atom[] | null] | null;
@@ -365,7 +364,13 @@ export default class Parser {
                 params,
                 returnTy
             );
-            const body = this.statements();
+            let body: AST.Statement[] | AST.Atom | null;
+            if (this.eat(Token.From)) {
+                body = this.atom();
+                this.eatSemi();
+            } else {
+                body = this.statements();
+            }
             return new AST.FunctionDeclaration(sigSpan, this.from(start), signature, body);
         } else {
             this.error(this.span, "expected identifier for function");
@@ -563,22 +568,6 @@ export default class Parser {
         return this.source;
     }
 }
-
-const heapTy = new Map([
-    ["i8", AST.HeapTyEnum.I8],
-    ["u8", AST.HeapTyEnum.U8],
-    ["i16", AST.HeapTyEnum.I16],
-    ["u16", AST.HeapTyEnum.U16]
-]);
-
-const stackTy = new Map([
-    ["i32", AST.StackTyEnum.I32],
-    ["u32", AST.StackTyEnum.U32],
-    ["f32", AST.StackTyEnum.F32],
-    ["i64", AST.StackTyEnum.I64],
-    ["u64", AST.StackTyEnum.U64],
-    ["f64", AST.StackTyEnum.F64]
-]);
 
 const assignOps = new Map([
     [Token.Equals, AST.BinOp.Id],
