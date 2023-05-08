@@ -35,6 +35,7 @@ export class Assign {
 export type Atom =
     | Mut
     | Pure
+    | Cast
     | Ascription
     | Field
     | Binary
@@ -53,6 +54,10 @@ export class Mut {
 
 export class Pure {
     constructor(public span: Span, public expr: Atom | null) {}
+}
+
+export class Cast {
+    constructor(public span: Span, public ty: Atom | null, public expr: Atom | null) {}
 }
 
 export class Ascription {

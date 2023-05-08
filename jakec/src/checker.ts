@@ -394,6 +394,11 @@ export default class Checker {
         const ty = new IR.Exponential(item.span, false, paramTys, returnTy);
         const name = item.sig.name.link(source.file.code);
 
+        if (name === "cast" && ty.params.length !== 1) {
+            this.error(item.span, "cast overloads must take exactly one parameter");
+            return new IR.Unreachable(item.span);
+        }
+
         const binOp = AST.nameToBinOp.get(name);
         if (binOp && ty.params.length !== 2) {
             this.error(item.span, "binary operator overloads must take exactly two parameters");
@@ -886,6 +891,37 @@ export default class Checker {
         } else if (atom instanceof AST.Mut || atom instanceof AST.Pure) {
             this.error(atom.span, "invalid expression");
             return new IR.Unreachable(atom.span);
+        } else if (atom instanceof AST.Cast) {
+            if (atom.expr === null || atom.ty === null) {
+                return new IR.Unreachable(atom.span);
+            }
+            const ty = this.ty(atom.ty, source.file);
+            if (ty === null) {
+                return new IR.Unreachable(atom.ty.span);
+            }
+            const arg = this.checkExprInner(atom.expr, source);
+            const res: IR.Unreachable | IR.Fn[] | null = this.findImplementation(
+                source.scope,
+                "cast",
+                new IR.Exponential(atom.span, false, [arg.ty], ty)
+            );
+            if (res instanceof IR.Unreachable) {
+                return new IR.Unreachable(atom.span);
+            } else if (res === null) {
+                throw new Error("operator name is local");
+            } else if (res.length == 0) {
+                this.error(atom.span, "no cast overloads found");
+                return new IR.Unreachable(atom.span);
+            } else if (res.length == 1) {
+                if (ty && !res[0].ty.ret.assignableTo(ty)) {
+                    this.error(atom.span, "type mismatch (cast does not match with context)");
+                    return new IR.Unreachable(atom.span);
+                }
+                return this.callWithCoercion(atom.span, res[0], [arg]);
+            } else {
+                this.error(atom.span, "multiple cast overloads found");
+                return new IR.Unreachable(atom.span);
+            }
         } else if (
             atom instanceof AST.TypeCall ||
             atom instanceof AST.Product ||

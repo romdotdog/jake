@@ -213,6 +213,14 @@ export default class Parser {
             const atom = this.primaryAtom();
             return new AST.Unary(this.from(start), op, atom);
         }
+        if (this.eat(Token.LeftAngle)) {
+            const ty = this.atom(true);
+            if (!this.eat(Token.RightAngle)) {
+                this.error(this.lookaheadSpan, "expected `>`");
+            }
+            const atom = this.primaryAtom();
+            return new AST.Cast(this.from(start), ty, atom);
+        }
         return this.simpleAtom(this.literal());
     }
 

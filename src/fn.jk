@@ -3,12 +3,18 @@ import "index.jk";
 export function add(x: i32, y: i32): i32 from i32.add;
 export function add(x: i64, y: i64): i64 from i64.add;
 
+export function cast(x: i32): i64 from i64.extend_s;
+
 export function fn(n: i32): i32 {
     return n + 1;
 }
 
 export function fn(n: i64): i64 {
     return n + 2;
+}
+
+export function fn(n: i32): i64 {
+    return <i64>n;
 }
 
 // fn: impls = [i32 -> i32, i64 -> i64]
