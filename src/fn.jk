@@ -1,5 +1,3 @@
-import "index.jk";
-
 export function add(x: i32, y: i32): i32 from i32.add;
 export function add(x: i64, y: i64): i64 from i64.add;
 

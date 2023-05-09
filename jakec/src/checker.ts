@@ -203,21 +203,14 @@ export default class Checker {
         public files: File[]
     ) {}
 
-    public static run(
-        system: System,
-        program: IR.Program,
-        idxToSource: Map<number, Source>,
-        files: File[],
-        unit: File[]
-    ) {
-        const checker = new Checker(system, program, idxToSource, files);
-        checker.exportStage(unit);
-        checker.importStage();
+    public run(unit: File[]) {
+        this.exportStage(unit);
+        this.importStage();
 
-        for (const source of checker.unit) {
+        for (const source of this.unit) {
             source.scope.push();
             for (const item of source.exported.values()) {
-                checker.resolve(item, checker.unsafeResolve);
+                this.resolve(item, this.unsafeResolve);
             }
         }
     }

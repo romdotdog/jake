@@ -12,7 +12,8 @@ class Toolchain {
     private stack: File[] = [];
     private pathToFile: Map<string, File> = new Map();
     private idxToSource: Map<number, Source> = new Map();
-    private program: Program = new Program();
+    private program = new Program();
+    private checker = new Checker(this.system, this.program, this.idxToSource, this.files);
 
     private traverse(path: string, maybeSrc?: string): File | undefined {
         const src = maybeSrc ?? this.system.load(path);
@@ -54,7 +55,7 @@ class Toolchain {
             }
 
             const unit = this.stack.splice(i);
-            Checker.run(this.system, this.program, this.idxToSource, this.files, unit);
+            this.checker.run(unit);
         }
 
         return file;
