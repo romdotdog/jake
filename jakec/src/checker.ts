@@ -469,7 +469,7 @@ export default class Checker {
         }
         let needsReturn = true;
         for (const statement of body) {
-            if (this.resolveStatement(fn, statement, source)) {
+            if (this.resolveStatement(fn.body, fn, statement, source)) {
                 needsReturn = false;
                 break;
             }
@@ -516,17 +516,22 @@ export default class Checker {
         return { name, mut, ty, expr: this.checkExpr(statement.expr, source, pattern.ty) };
     }
 
-    private resolveStatement(fn: IR.FunctionImpl, statement: AST.Statement, source: Source): boolean {
+    private resolveStatement(
+        body: IR.Statement[],
+        fn: IR.FunctionImpl,
+        statement: AST.Statement,
+        source: Source
+    ): boolean {
         const { file, scope } = source;
         if (statement instanceof AST.Let) {
             const let_ = this.resolveLet(statement, source);
             if (let_ instanceof Span) {
-                fn.body.push(IR.Unreachable.drop(let_));
+                body.push(IR.Unreachable.drop(let_));
             } else {
                 const { name, mut, ty, expr } = let_;
                 const local = fn.addLocal(name, mut, ty);
                 scope.set(name, local);
-                fn.body.push(new IR.LocalSet(local, expr));
+                body.push(new IR.LocalSet(local, expr));
             }
             return false;
         } else if (statement instanceof AST.Assign) {
@@ -575,9 +580,9 @@ export default class Checker {
             if (statement.right === null) {
                 const expr = new IR.Unreachable(statement.span);
                 if (variable instanceof IR.Local) {
-                    fn.body.push(new IR.LocalSet(variable, expr));
+                    body.push(new IR.LocalSet(variable, expr));
                 } else {
-                    fn.body.push(new IR.GlobalSet(variable, expr));
+                    body.push(new IR.GlobalSet(variable, expr));
                 }
                 return false;
             }
@@ -589,9 +594,9 @@ export default class Checker {
             );
 
             if (variable instanceof IR.Local) {
-                fn.body.push(new IR.LocalSet(variable, expr));
+                body.push(new IR.LocalSet(variable, expr));
             } else {
-                fn.body.push(new IR.GlobalSet(variable, expr));
+                body.push(new IR.GlobalSet(variable, expr));
             }
             return false;
         } else if (statement instanceof AST.Return) {
@@ -607,15 +612,58 @@ export default class Checker {
             }
 
             const expr = this.checkExpr(atom, source, fn.ty.ret);
-            fn.body.push(new IR.Return(expr));
+            body.push(new IR.Return(expr));
             return true;
+        } else if (statement instanceof AST.If) {
+            if (statement.cond === null) {
+                return false;
+            }
+            const cond = this.checkExpr(
+                statement.cond,
+                source,
+                new IR.StackTy(statement.cond.span, IR.StackTyEnum.I32)
+            );
+            const innerBody: IR.Statement[] = [];
+
+            let firstBranchReturns = false;
+            scope.push();
+            for (const innerStatement of statement.body) {
+                if (this.resolveStatement(innerBody, fn, innerStatement, source)) {
+                    firstBranchReturns = true;
+                    break;
+                }
+            }
+            scope.pop();
+
+            let secondBranchReturns = false;
+            let elseStatements: AST.Statement[];
+            if (statement.else_ === undefined) {
+                elseStatements = [];
+            } else if (statement.else_ instanceof AST.If) {
+                elseStatements = [statement.else_];
+            } else {
+                elseStatements = statement.else_;
+            }
+
+            const innerElse: IR.Statement[] = [];
+            scope.push();
+            for (const innerStatement of elseStatements) {
+                if (this.resolveStatement(innerElse, fn, innerStatement, source)) {
+                    secondBranchReturns = true;
+                    break;
+                }
+            }
+            scope.pop();
+
+            body.push(new IR.If(cond, innerBody, innerElse));
+            return firstBranchReturns && secondBranchReturns;
         } else if (statement instanceof AST.FunctionDeclaration || statement instanceof AST.Global) {
             this.error(statement.span, "not yet supported");
             // TODO: caught not nevering here, waiting for code coverage policy
             return false;
         } else {
             const expr = this.checkExpr(statement, source, fn.ty.ret);
-            fn.body.push(new IR.Drop(expr));
+            body.push(new IR.Drop(expr));
             return false;
         }
     }
@@ -835,6 +883,9 @@ export default class Checker {
                         if (IR.Product.isVoid(ty)) {
                             return IR.ProductCtr.void(atom.span, ty.span);
                         }
+                        if (res.ty.assignableTo(ty)) {
+                            return new IR.LocalRef(atom.span, res, res.ty);
+                        }
                         this.error(atom.span, "type mismatch (local doesn't match with context)");
                         return new IR.Unreachable(atom.span);
                     } else {
@@ -849,6 +900,9 @@ export default class Checker {
                     if (ty !== undefined) {
                         if (IR.Product.isVoid(ty)) {
                             return IR.ProductCtr.void(atom.span, ty.span);
+                        }
+                        if (resolved.ty.assignableTo(ty)) {
+                            return new IR.GlobalRef(atom.span, resolved, resolved.ty);
                         }
                         this.error(atom.span, "type mismatch (local doesn't match with context)");
                         return new IR.Unreachable(atom.span);

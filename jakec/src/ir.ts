@@ -81,7 +81,7 @@ export class Local {
     }
 }
 
-export type Statement = LocalSet | GlobalSet | Return | Drop;
+export type Statement = LocalSet | GlobalSet | Return | Drop | If;
 
 export class LocalSet {
     constructor(public local: Local, public expr: Expression) {}
@@ -97,6 +97,10 @@ export class Return {
 
 export class Drop {
     constructor(public expr: Expression) {}
+}
+
+export class If {
+    constructor(public cond: Expression, public body: Statement[], public else_: Statement[]) {}
 }
 
 export type Expression = Unreachable | LocalRef | GlobalRef | Call | IntrinsicCall | Integer | Float | ProductCtr;

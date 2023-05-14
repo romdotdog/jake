@@ -1,10 +1,9 @@
-import "fn.jk" with { fn };
-import host "jake/report" as report: i32 -> [];
+function gt(x: i32, y: i32): i32 from i32.gt_s; 
 
-// fn: impls = [i32 -> i32]
-
-host let global: i32 = 2147483647;
-
-export host function _start(): [] {
-    report(fn(global));
+export host function sign(x: i32): i32 {
+    if x > 0 {
+        return 5;
+    } else {
+        return 0;
+    }
 }

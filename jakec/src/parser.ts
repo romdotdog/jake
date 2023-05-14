@@ -290,6 +290,24 @@ export default class Parser {
         return null;
     }
 
+    private if_(start: number): AST.If | null {
+        const cond = this.atom();
+        const body = this.statements();
+        let else_: AST.Statement[] | AST.If | undefined = undefined;
+        if (this.eat(Token.Else)) {
+            if (this.eat(Token.If)) {
+                const let_ = this.if_(this.start);
+                if (let_ === null) {
+                    return null;
+                }
+                else_ = let_;
+            } else {
+                else_ = this.statements();
+            }
+        }
+        return new AST.If(this.from(start), cond, body, else_);
+    }
+
     private statement(): AST.Statement | null {
         const start = this.start;
         if (this.eat(Token.Let)) {
@@ -301,6 +319,8 @@ export default class Parser {
                 this.eatSemi();
             }
             return new AST.Return(this.from(start), atom);
+        } else if (this.eat(Token.If)) {
+            return this.if_(start);
         }
 
         const atom = this.atom();

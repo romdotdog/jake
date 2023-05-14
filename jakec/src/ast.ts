@@ -18,10 +18,19 @@ export class HostImport {
     constructor(public span: Span, public path: StringLiteral, public name: Span, public ty: Atom | null) {}
 }
 
-export type Statement = Let | Return | Assign | Atom | Item;
+export type Statement = Let | Return | If | Assign | Atom | Item;
 
 export class Let {
     constructor(public span: Span, public pattern: Atom | null, public expr: Atom | null) {}
+}
+
+export class If {
+    constructor(
+        public span: Span,
+        public cond: Atom | null,
+        public body: Statement[],
+        public else_: Statement[] | If | undefined
+    ) {}
 }
 
 export class Return {

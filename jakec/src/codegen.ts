@@ -87,7 +87,7 @@ export class CodeGen {
             binaryen.createType(fn.params.map(p => this.localType(p.ty))),
             this.result(fn.ty.ret),
             fn.locals.map(l => this.localType(l.ty)),
-            this.functionBody(fn)
+            this.body(fn.body)
         );
         if (fn.host) {
             if (fn.name === "_start" && this.program._start && fn !== this.program._start) {
@@ -137,10 +137,10 @@ export class CodeGen {
         }
     }
 
-    private functionBody(fn: IR.FunctionImpl): binaryen.ExpressionRef {
+    private body(body: IR.Statement[]): binaryen.ExpressionRef {
         return this.module.block(
             null,
-            fn.body.map(stmt => {
+            body.map(stmt => {
                 if (stmt instanceof IR.Drop) {
                     if (IR.Product.isVoid(stmt.expr.ty)) {
                         return this.expr(stmt.expr);
@@ -152,6 +152,8 @@ export class CodeGen {
                     return this.module.global.set(stmt.global.internalName, this.expr(stmt.expr));
                 } else if (stmt instanceof IR.Return) {
                     return this.module.return(this.expr(stmt.expr));
+                } else if (stmt instanceof IR.If) {
+                    return this.module.if(this.expr(stmt.cond), this.body(stmt.body), this.body(stmt.else_));
                 } else {
                     unreachable(stmt);
                 }
