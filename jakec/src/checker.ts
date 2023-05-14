@@ -737,8 +737,10 @@ export default class Checker {
                         coercedArgs[i] = IR.ProductCtr.void(arg.span, destTy.span);
                     } else if (IR.isIntegerTy(destTy)) {
                         coercedArgs[i] = new IR.Integer(arg.span, arg.value, destTy);
+                    } else if (IR.isFloatTy(destTy)) {
+                        coercedArgs[i] = new IR.Float(arg.span, Number(arg.value), destTy);
                     } else {
-                        // TODO: coercion to f32 (Math.fround)
+                        // typechecking failure
                         throw new Error();
                     }
                 } else {
